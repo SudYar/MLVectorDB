@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    container_name: mydb
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./pyproject.toml:/app/pyproject.toml
+      - ./poetry.lock:/app/poetry.lock 
+    stdin_open: true
+    tty: true
