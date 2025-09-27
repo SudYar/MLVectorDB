@@ -9,8 +9,11 @@ MLVectorDB is a Python-based vector database system designed to efficiently stor
 - **Protocol-based Architecture**: Clean interfaces defined using Python Protocols for maximum flexibility
 - **Vector Operations**: Support for distance calculations, similarity searches, and vector normalization
 - **Modular Design**: Separate components for storage, indexing, and query processing
+- **REST API**: Full HTTP API for accessing QueryProcessor functionality with FastAPI
+- **Multiple Query Types**: KNN, range search, similarity search, metadata filtering, and hybrid queries
 - **Extensible**: Easy to implement custom storage engines, index types, and query processors
 - **Type Safe**: Full type hints and Protocol compliance checking
+- **Production Ready**: Comprehensive logging, error handling, and API documentation
 
 ## Installation
 
@@ -19,6 +22,8 @@ pip install -e .
 ```
 
 ## Quick Start
+
+### Using the Vector Classes Directly
 
 ```python
 import numpy as np
@@ -35,6 +40,45 @@ similarity = vector1.similarity(vector2, metric="cosine")
 print(f"Distance: {distance}")
 print(f"Similarity: {similarity}")
 ```
+
+### Using the REST API
+
+Start the API server:
+
+```bash
+python -m mlvectordb.api.server --port 8000
+```
+
+Then make HTTP requests:
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# KNN query
+curl -X POST http://localhost:8000/query/knn \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "knn",
+    "vector": [1.0, 2.0, 3.0],
+    "k": 5
+  }'
+
+# Range query
+curl -X POST http://localhost:8000/query/range \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "range", 
+    "vector": [0.5, 1.5, 2.5],
+    "radius": 2.0
+  }'
+```
+
+### API Documentation
+
+Once the server is running, visit:
+- Interactive API docs: `http://localhost:8000/docs`
+- Alternative docs: `http://localhost:8000/redoc`
 
 ## Architecture Overview
 
@@ -207,9 +251,38 @@ Handles query parsing, optimization, and execution.
 └─────────────────────────────────────┘
 ```
 
+### 5. REST API
+
+FastAPI-based REST interface providing HTTP access to QueryProcessor functionality.
+
+**Key Endpoints:**
+- `GET /health` - Health check and status
+- `POST /query/knn` - K-nearest neighbors search
+- `POST /query/range` - Range search
+- `POST /query/similarity` - Similarity search
+- `POST /query/metadata` - Metadata filtering
+- `POST /query/hybrid` - Hybrid queries
+- `POST /query/explain` - Query execution plans
+- `GET /statistics` - Query processor statistics
+
+**Features:**
+- OpenAPI/Swagger documentation at `/docs`
+- Pydantic request/response validation
+- Comprehensive error handling
+- CORS support for web applications
+- Query statistics tracking
+- Result caching capabilities
+
 ## System Relationships
 
 ```
+     ┌─────────────────┐      ┌─────────────────┐
+     │   REST API      │◄─────┤   API Client    │
+     │   (FastAPI)     │      │  (HTTP Requests)│
+     └─────────┬───────┘      └─────────────────┘
+               │
+               │ uses
+               ▼
      ┌─────────────────┐
      │ QueryProcessor  │ ──── Coordinates queries
      └─────────┬───────┘
@@ -259,11 +332,95 @@ mlvectordb/
 │   │   ├── index.py
 │   │   ├── storage_engine.py
 │   │   └── query_processor.py
-│   └── implementations/     # Concrete implementations
-│       └── simple_vector.py
-├── tests/                   # Test suite
-├── pyproject.toml          # Project configuration
-└── README.md               # This file
+│   ├── implementations/     # Concrete implementations
+│   │   ├── simple_vector.py
+│   │   └── basic_query_processor.py
+│   └── api/                # REST API
+│       ├── main.py         # FastAPI application
+│       ├── models.py       # Pydantic models
+│       └── server.py       # Server CLI
+├── examples/               # Usage examples
+│   └── api_client.py      # API client example
+├── tests/                 # Test suite
+├── pyproject.toml        # Project configuration
+└── README.md            # This file
+```
+
+## API Examples
+
+### Python Client
+
+```python
+from examples.api_client import MLVectorDBClient
+
+client = MLVectorDBClient("http://localhost:8000")
+
+# Health check
+health = client.health_check()
+print(f"Status: {health['status']}")
+
+# KNN search
+results = client.knn_query(
+    vector=[1.0, 2.0, 3.0],
+    k=5
+)
+print(f"Found {results['total_results']} results")
+
+# Query statistics  
+stats = client.get_statistics()
+print(f"Total queries: {stats['total_queries']}")
+```
+
+### cURL Examples
+
+```bash
+# Start the server
+python -m mlvectordb.api.server --port 8000
+
+# Health check
+curl http://localhost:8000/health
+
+# Get supported query types
+curl http://localhost:8000/query-types
+
+# KNN Query
+curl -X POST http://localhost:8000/query/knn \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "knn",
+    "vector": [1.0, 2.0, 3.0],
+    "k": 5
+  }'
+
+# Similarity Query
+curl -X POST http://localhost:8000/query/similarity \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "similarity",
+    "vector": [1.0, 0.0, 0.0],
+    "threshold": 0.7,
+    "metric": "cosine"
+  }'
+
+# Metadata Query
+curl -X POST http://localhost:8000/query/metadata \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "metadata",
+    "filter": {"category": "documents", "active": true}
+  }'
+
+# Query Explanation
+curl -X POST http://localhost:8000/query/explain \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "knn",
+    "vector": [1.0, 2.0, 3.0],
+    "k": 10
+  }'
+
+# Get Statistics
+curl http://localhost:8000/statistics
 ```
 
 ## Contributing

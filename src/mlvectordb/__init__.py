@@ -13,9 +13,15 @@ from .interfaces.index import Index
 from .interfaces.storage_engine import StorageEngine
 from .interfaces.query_processor import QueryProcessor
 
+# Import implementations
+from .implementations.simple_vector import SimpleVector
+from .implementations.basic_query_processor import BasicQueryProcessor
+
 __all__ = [
     "Vector",
     "Index", 
     "StorageEngine",
     "QueryProcessor",
+    "SimpleVector",
+    "BasicQueryProcessor",
 ]
