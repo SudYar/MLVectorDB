@@ -62,7 +62,7 @@ class StorageEngine(Protocol):
         """
         raise NotImplementedError
 
-    def writes(self, vectors: List[VectorProtocol], namespace: str = "default") -> List[bool]:
+    def write_vectors(self, vectors: List[VectorProtocol], namespace: str = "default") -> List[bool]:
         """
         Store multiple vectors persistently.
         
