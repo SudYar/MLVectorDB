@@ -29,10 +29,10 @@ class HNSWIndex(IndexProtocol):
         self._vectors[namespace] = {}
         self._next_id[namespace] = 0
 
-    def add(self, vectors: Iterable[VectorProtocol]) -> None:
+    def add(self, vectors: Iterable[VectorProtocol], namespace: str = "default") -> None:
         grouped: Dict[str, List[VectorProtocol]] = {}
         for v in vectors:
-            grouped.setdefault(v.namespace, []).append(v)
+            grouped.setdefault(namespace, []).append(v)
 
         for ns, vecs in grouped.items():
             self._init_namespace(ns)

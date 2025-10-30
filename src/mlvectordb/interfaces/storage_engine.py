@@ -6,7 +6,7 @@ persistent storage and retrieval of vectors and metadata.
 """
 
 from typing import Protocol, List, Optional, Dict, Any, Iterator, Mapping
-from .vector import Vector
+from .vector import VectorProtocol
 from typing_extensions import runtime_checkable
 
 
@@ -49,7 +49,7 @@ class StorageEngine(Protocol):
         """
         raise NotImplementedError
 
-    def write(self, vector: Vector, namespace: str = "default") -> bool:
+    def write(self, vector: VectorProtocol, namespace: str = "default") -> bool:
         """
         Store a vector persistently.
 
@@ -62,7 +62,7 @@ class StorageEngine(Protocol):
         """
         raise NotImplementedError
 
-    def writes(self, vectors: List[Vector], namespace: str = "default") -> List[bool]:
+    def writes(self, vectors: List[VectorProtocol], namespace: str = "default") -> List[bool]:
         """
         Store multiple vectors persistently.
         
@@ -75,7 +75,7 @@ class StorageEngine(Protocol):
         """
         raise NotImplementedError
     
-    def read(self, vector_id: str, namespace: str = "default") -> Optional[Vector]:
+    def read(self, vector_id: str, namespace: str = "default") -> Optional[VectorProtocol]:
         """
         Retrieve a vector by its ID.
         
@@ -84,11 +84,11 @@ class StorageEngine(Protocol):
             namespace: Namespace to search in
             
         Returns:
-            Optional[Vector]: Vector if found, None otherwise
+            Optional[VectorProtocol]: Vector if found, None otherwise
         """
         raise NotImplementedError
 
-    def read_vectors(self, vector_ids: List[str], namespace: str = "default") -> List[Optional[Vector]]:
+    def read_vectors(self, vector_ids: List[str], namespace: str = "default") -> List[Optional[VectorProtocol]]:
         """
         Retrieve multiple vectors by their IDs.
 
@@ -131,7 +131,7 @@ class StorageEngine(Protocol):
             self,
             namespace: str = "default",
             batch_size: int = 100
-    ) -> Iterator[List[Vector]]:
+    ) -> Iterator[List[VectorProtocol]]:
         """
         Iterate over all vectors in a namespace in batches.
 
@@ -140,7 +140,7 @@ class StorageEngine(Protocol):
             batch_size: Size of each batch
 
         Yields:
-            List[Vector]: Batch of vectors
+            List[VectorProtocol]: Batch of vectors
         """
         raise NotImplementedError
 
@@ -163,7 +163,7 @@ class StorageEngine(Protocol):
         raise NotImplementedError
 
     @property
-    def namespace_map(self) -> Mapping[str, List[Vector]]:
+    def namespace_map(self) -> Mapping[str, List[VectorProtocol]]:
         """
         Get mapping of namespaces to their vectors.
 
