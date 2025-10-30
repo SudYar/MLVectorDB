@@ -1,9 +1,9 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
 import numpy as np
 
-from src.mlvectordb.interfaces.query_processor import QueryProcessor
+from src.mlvectordb.interfaces.query_processor import QueryProcessorProtocol
 from src.mlvectordb.implementations.vector import Vector
 
 
@@ -36,7 +36,7 @@ class SearchResultResponse(BaseModel):
 
 
 class RestAPI:
-    def __init__(self, query_processor: QueryProcessor):
+    def __init__(self, query_processor: QueryProcessorProtocol):
         self.app = FastAPI(title="MLVectorDB REST API")
         self.query_processor = query_processor
         self._setup_routes()
@@ -121,6 +121,6 @@ class RestAPI:
         return self.app
 
 
-def create_app(query_processor: QueryProcessor) -> FastAPI:
+def create_app(query_processor: QueryProcessorProtocol) -> FastAPI:
     api = RestAPI(query_processor)
     return api.get_app()

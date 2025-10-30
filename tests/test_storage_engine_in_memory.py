@@ -1,11 +1,8 @@
 import unittest
-import sys
-from typing import List
-from collections.abc import Iterator
+
 
 from src.mlvectordb.implementations.storage_engine_in_memory import StorageEngineInMemory
 from src.mlvectordb.implementations.vector import Vector
-from src.mlvectordb.interfaces.vector import VectorProtocol
 
 
 class TestStorageEngineInMemory(unittest.TestCase):

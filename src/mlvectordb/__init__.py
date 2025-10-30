@@ -8,20 +8,22 @@ including vector storage, indexing, and querying capabilities.
 __version__ = "0.1.0"
 __author__ = "MLVectorDB Team"
 
-from .interfaces.vector import Vector
-from .interfaces.index import Index
+from .interfaces.vector import VectorProtocol
+from .interfaces.index import IndexProtocol
 from .interfaces.storage_engine import StorageEngine
-from .interfaces.query_processor import QueryProcessor
+from .interfaces.query_processor import QueryProcessorProtocol
 
 # Import implementations
-from .implementations.simple_vector import SimpleVector
-from .implementations.basic_query_processor import BasicQueryProcessor
+from .implementations.vector import Vector
+from .implementations.storage_engine_in_memory import StorageEngineInMemory
+from .implementations.index import HNSWIndex
 
 __all__ = [
-    "Vector",
-    "Index", 
+    "VectorProtocol",
+    "IndexProtocol",
     "StorageEngine",
-    "QueryProcessor",
-    "SimpleVector",
-    "BasicQueryProcessor",
+    "QueryProcessorProtocol",
+    "Vector",
+    "StorageEngineInMemory",
+    "HNSWIndex",
 ]
