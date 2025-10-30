@@ -22,7 +22,7 @@ class HNSWIndex(IndexProtocol):
         if namespace in self._spaces:
             return
         index = hnswlib.Index(space=self.metric, dim=self.dim)
-        index.init_index(max_elements=100, ef_construction=10, M=16)
+        index.init_index(max_elements=200, ef_construction=10, M=16)
         index.set_ef(10)
         self._spaces[namespace] = index
         self._vectors[namespace] = {}
@@ -56,7 +56,7 @@ class HNSWIndex(IndexProtocol):
         if namespace not in self._spaces:
             return []
         index = self._spaces[namespace]
-        labels, distances = index.knn_query(query.reshape(1, -1), k=top_k)
+        labels, distances = index.knn_query(query.reshape(1, -1), k=min(top_k, len(self._vectors[namespace])))
         labels, distances = labels[0], distances[0]
         results: List[SearchResult] = []
         for lid, dist in zip(labels, distances):
