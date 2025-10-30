@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Mapping, Any, Sequence, Optional
 import numpy as np
-from interfaces.vector import VectorProtocol
+from ..interfaces.vector import VectorProtocol
 
 @dataclass
 class Vector(VectorProtocol):
