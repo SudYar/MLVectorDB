@@ -2,7 +2,7 @@
 name = "vectordb"
 version = "0.1.0"
 description = "Vector database project for university"
-authors = ["Nolasar"]
+authors = ["Nolasar", "SudYar"]
 package-mode = false
 
 [tool.poetry.dependencies]

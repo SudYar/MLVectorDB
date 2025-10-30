@@ -5,7 +5,7 @@ This module defines the StorageEngine Protocol interface which handles the
 persistent storage and retrieval of vectors and metadata.
 """
 
-from typing import Protocol, List, Optional, Dict, Any, Iterator
+from typing import Protocol, List, Optional, Dict, Any, Iterator, Mapping
 from .vector import Vector
 from typing_extensions import runtime_checkable
 
@@ -27,7 +27,7 @@ class StorageEngine(Protocol):
         Returns:
             str: Storage type (e.g., "memory", "disk", "distributed")
         """
-        ...
+        raise NotImplementedError
     
     @property
     def total_vectors(self) -> int:
@@ -37,7 +37,7 @@ class StorageEngine(Protocol):
         Returns:
             int: Number of stored vectors
         """
-        ...
+        raise NotImplementedError
     
     @property
     def storage_size(self) -> int:
@@ -47,92 +47,74 @@ class StorageEngine(Protocol):
         Returns:
             int: Storage size in bytes
         """
-        ...
-    
-    def store_vector(self, vector: Vector) -> bool:
+        raise NotImplementedError
+
+    def write(self, vector: Vector, namespace: str = "default") -> bool:
         """
         Store a vector persistently.
-        
+
         Args:
             vector: Vector to store
-            
+            namespace: Namespace to write in
+
         Returns:
             bool: True if successfully stored, False otherwise
         """
-        ...
-    
-    def store_vectors(self, vectors: List[Vector]) -> List[bool]:
+        raise NotImplementedError
+
+    def writes(self, vectors: List[Vector], namespace: str = "default") -> List[bool]:
         """
         Store multiple vectors persistently.
         
         Args:
             vectors: List of vectors to store
+            namespace: Namespace to write in
             
         Returns:
             List[bool]: List of success status for each vector
         """
-        ...
+        raise NotImplementedError
     
-    def retrieve_vector(self, vector_id: str) -> Optional[Vector]:
+    def read(self, vector_id: str, namespace: str = "default") -> Optional[Vector]:
         """
         Retrieve a vector by its ID.
         
         Args:
             vector_id: ID of vector to retrieve
+            namespace: Namespace to search in
             
         Returns:
             Optional[Vector]: Vector if found, None otherwise
         """
-        ...
-    
-    def retrieve_vectors(self, vector_ids: List[str]) -> List[Optional[Vector]]:
+        raise NotImplementedError
+
+    def read_vectors(self, vector_ids: List[str], namespace: str = "default") -> List[Optional[Vector]]:
         """
         Retrieve multiple vectors by their IDs.
-        
+
         Args:
             vector_ids: List of vector IDs to retrieve
-            
+            namespace: Namespace to search in
+
         Returns:
             List[Optional[Vector]]: List of vectors (None if not found)
         """
-        ...
-    
-    def update_vector(self, vector: Vector) -> bool:
-        """
-        Update an existing stored vector.
-        
-        Args:
-            vector: Updated vector data
-            
-        Returns:
-            bool: True if successfully updated, False otherwise
-        """
-        ...
-    
-    def delete_vector(self, vector_id: str) -> bool:
+        raise NotImplementedError
+
+
+    def delete(self, vector_id: str, namespace: str = "default") -> bool:
         """
         Delete a vector from storage.
         
         Args:
             vector_id: ID of vector to delete
+            namespace: Namespace to delete from
             
         Returns:
             bool: True if successfully deleted, False otherwise
         """
-        ...
-    
-    def delete_vectors(self, vector_ids: List[str]) -> List[bool]:
-        """
-        Delete multiple vectors from storage.
-        
-        Args:
-            vector_ids: List of vector IDs to delete
-            
-        Returns:
-            List[bool]: List of success status for each deletion
-        """
-        ...
-    
+        raise NotImplementedError
+
     def exists(self, vector_id: str) -> bool:
         """
         Check if a vector exists in storage.
@@ -143,94 +125,25 @@ class StorageEngine(Protocol):
         Returns:
             bool: True if exists, False otherwise
         """
-        ...
-    
-    def list_vector_ids(
-        self, 
-        offset: int = 0, 
-        limit: Optional[int] = None
-    ) -> List[str]:
-        """
-        List vector IDs with pagination support.
-        
-        Args:
-            offset: Starting offset for pagination
-            limit: Maximum number of IDs to return
-            
-        Returns:
-            List[str]: List of vector IDs
-        """
-        ...
-    
+        raise NotImplementedError
+
     def iterate_vectors(
-        self,
-        batch_size: int = 100,
-        filter_condition: Optional[Dict[str, Any]] = None
+            self,
+            namespace: str = "default",
+            batch_size: int = 100
     ) -> Iterator[List[Vector]]:
         """
-        Iterate over all vectors in batches.
-        
+        Iterate over all vectors in a namespace in batches.
+
         Args:
+            namespace: Namespace to iterate over
             batch_size: Size of each batch
-            filter_condition: Optional metadata filter conditions
-            
+
         Yields:
             List[Vector]: Batch of vectors
         """
-        ...
-    
-    def query_by_metadata(
-        self,
-        filter_condition: Dict[str, Any],
-        offset: int = 0,
-        limit: Optional[int] = None
-    ) -> List[Vector]:
-        """
-        Query vectors by metadata conditions.
-        
-        Args:
-            filter_condition: Metadata filter conditions
-            offset: Starting offset for pagination
-            limit: Maximum number of vectors to return
-            
-        Returns:
-            List[Vector]: List of matching vectors
-        """
-        ...
-    
-    def create_backup(self, backup_path: str) -> bool:
-        """
-        Create a backup of the storage.
-        
-        Args:
-            backup_path: Path where to save the backup
-            
-        Returns:
-            bool: True if successfully backed up, False otherwise
-        """
-        ...
-    
-    def restore_from_backup(self, backup_path: str) -> bool:
-        """
-        Restore storage from a backup.
-        
-        Args:
-            backup_path: Path to restore the backup from
-            
-        Returns:
-            bool: True if successfully restored, False otherwise
-        """
-        ...
-    
-    def optimize_storage(self) -> bool:
-        """
-        Optimize the storage (e.g., defragmentation, compression).
-        
-        Returns:
-            bool: True if successfully optimized, False otherwise
-        """
-        ...
-    
+        raise NotImplementedError
+
     def clear_all(self) -> bool:
         """
         Clear all vectors from storage.
@@ -238,7 +151,7 @@ class StorageEngine(Protocol):
         Returns:
             bool: True if successfully cleared, False otherwise
         """
-        ...
+        raise NotImplementedError
     
     def get_storage_info(self) -> Dict[str, Any]:
         """
@@ -247,4 +160,14 @@ class StorageEngine(Protocol):
         Returns:
             Dict[str, Any]: Storage information and statistics
         """
-        ...
+        raise NotImplementedError
+
+    @property
+    def namespace_map(self) -> Mapping[str, List[Vector]]:
+        """
+        Get mapping of namespaces to their vectors.
+
+        Returns:
+            Mapping[str, List[Vector]]: Namespace to vectors mapping
+        """
+        raise NotImplementedError
