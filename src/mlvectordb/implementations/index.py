@@ -15,6 +15,7 @@ class HNSWIndex(IndexProtocol):
         self.dim = dim
         self.metric = metric
         self._spaces: Dict[str, hnswlib.Index] = {}
+        # TODO: load vectors from storage
         self._vectors: Dict[str, Dict[int, VectorProtocol]] = {}
         self._next_id: Dict[str, int] = {}
 
