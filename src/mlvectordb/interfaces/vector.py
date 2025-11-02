@@ -1,12 +1,22 @@
-from typing import Protocol, Sequence, Mapping, Any
+from __future__ import annotations
+from typing import Protocol, Sequence, Mapping, Any, runtime_checkable
 import numpy as np
+from dataclasses import dataclass
+from uuid import UUID
 
+@runtime_checkable
 class VectorProtocol(Protocol):
-    id: str
-    values: Sequence[float]
-    namespace: str
+    id: UUID
+    values: np.ndarray
     metadata: Mapping[str, Any]
 
-    def to_numpy(self) -> "np.ndarray": ...
+    def __init__(self, values: Sequence[float], metadata: Mapping[str, Any] | None = None) -> None:
+        ...
 
-    def dimension(self) -> int: ...
+    def shape(self) -> tuple:
+        ...
+
+@dataclass
+class VectorDTO:
+    values: Sequence[float]
+    metadata: Mapping[str, Any]
