@@ -88,17 +88,84 @@ MLVectorDB follows a layered architecture with the following core components:
 
 All components are defined as Python Protocols, ensuring type safety and enabling multiple implementations.
 
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│     Vector      │    │     Index       │    │ StorageEngine   │    │ QueryProcessor  │
-│   (Protocol)    │    │   (Protocol)    │    │   (Protocol)    │    │   (Protocol)    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │                       │
-         ▼                       ▼                       ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│  SimpleVector   │    │   FlatIndex     │    │  MemoryStorage  │    │ BasicProcessor  │
-│ (Implementation)│    │(Implementation) │    │(Implementation) │    │(Implementation) │
-└─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘
+```mermaid
+classDiagram
+    class Vector {
+        +UUID id
+        +np.array values
+        +Mapping<str, Any> metadata
+    }
+	
+	class VectorDTO {
+        +np.array values
+        +Mapping<str, Any> metadata
+    }
+
+    class SearchResult {
+        +UUID id
+        +float score
+        +Vector? vector
+    }
+
+    class StorageEngine {
+        +write(vector: Vector, namespace: str) None
+        +read(vector_id: UUID, namespace: str) Vector?
+        +read_batch(ids: Sequence<str>, namespace: str) Iterable <Vector>
+        +delete(vector_id: UUID, namespace: str=DEFAULT) None
+        +namespaceMap<str , list<Vector>>
+    }
+
+    class Index {
+        +add(vectors: Iterable<Vector>) None
+        +remove(ids: Sequence<str>, namespace: str=DEFAULT) None
+        +search(query: VectorDTO, top_k: int, namespace: str=DEFAULT, filter: Filter?, metric: Metric="cosine") Iterable<SearchResult>
+        +rebuild(source: Mapping[str, List[Vector]], metric: Metric="cosine") None
+        +dimension() int?
+    }
+
+
+    class QueryProcessor {
+        +insert(vector: Vector) None
+        +upsert_many(vectors: Iterable<Vector>) None
+        +find_similar(query: VectorDTO, top_k: int, namespace: str=DEFAULT, filter: Filter?, metric: Metric="cosine") Iterable<SearchResult>
+        +delete(vector_id: UUID, namespace: str=DEFAULT) None
+    }
+
+    class RestAPI {
+        +insert_vector(vector: VectorDTO) None
+        +search_vectors(query: Embedding, top_k: int, namespace: str=DEFAULT, filter: Filter?, metric: Metric="cosine") Iterable<SearchResult>
+        +delete_vector(vector_id: UUID, namespace: str=DEFAULT) None
+        +health() Mapping
+    }
+
+
+    class ReplicationManager {
+        <<interface>>
+        +replicate_write(vector: Vector) None
+        +replicate_delete(vector_id: UUID, namespace: str=DEFAULT) None
+        +reconcile(namespace: str=DEFAULT) None
+        +members() Sequence<str>
+    }
+
+    class ShardingManager {
+        <<interface>>
+        +shard_for_vector(vector: Vector) str
+        +shard_for_id(vector_id: UUID, namespace: str=DEFAULT) str
+        +all_shards() Sequence<str>
+    }	
+
+    %% Relationships
+    QueryProcessor --> Index : uses
+    QueryProcessor --> StorageEngine : uses
+    %%  QueryProcessor -- ReplicationManager : syncs with
+    %%  QueryProcessor -- ShardingManager : distributes via
+    RestAPI --> QueryProcessor : forwards requests
+    RestAPI -- VectorDTO : uses
+    Index --> Vector : indexes
+    StorageEngine --> Vector : stores
+    QueryProcessor --> SearchResult : returns
+    Index --> SearchResult : produces
+    
 ```
 
 ## Core Components
