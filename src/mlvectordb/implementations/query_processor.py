@@ -21,8 +21,7 @@ class QueryProcessor(QueryProcessorProtocol):
 
     def upsert_many(self, vectors: Iterable[VectorDTO], namespace: str = "default") -> None:
         vecs = [Vector(values=v.values, metadata=v.metadata) for v in vectors]
-        for v in vecs:
-            self._storage.write(v, namespace)
+        self._storage.write_vectors(vecs, namespace)
         self._index.add(vecs, namespace)
 
     def find_similar(
@@ -36,7 +35,7 @@ class QueryProcessor(QueryProcessorProtocol):
         if not search_results:
             return []
         ids = [res.vector_id for res in search_results]
-        stored_vectors = list(self._storage.read_batch(ids, namespace))
+        stored_vectors = list(self._storage.read_vectors(ids, namespace))
         vector_map = {v.id: v for v in stored_vectors}
         enriched = []
         for res in search_results:

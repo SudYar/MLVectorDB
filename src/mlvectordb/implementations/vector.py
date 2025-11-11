@@ -6,7 +6,9 @@ import numpy as np
 from uuid import UUID
 from ..interfaces.vector import VectorProtocol
 
+
 class Vector(VectorProtocol):
+
     def __init__(self, values: Sequence[float], metadata: Mapping[str, Any] | None = None) -> None:
         self._id: UUID = uuid.uuid4()
         self._values: np.ndarray = np.array(values, dtype=np.float32)
