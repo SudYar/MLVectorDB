@@ -67,11 +67,11 @@ class Index(IndexProtocol):
                 label_to_uuid.pop(label, None)
 
     def search(
-    self,
-    query: VectorDTO,
-    top_k: int,
-    namespace: str,
-    metric: str
+        self,
+        query: VectorDTO,
+        top_k: int,
+        namespace: str,
+        metric: str
     ) -> List[SearchResultProtocol]:
         if namespace not in self._indexes:
             return []

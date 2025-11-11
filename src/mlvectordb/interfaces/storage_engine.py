@@ -1,173 +1,53 @@
 """
-StorageEngine interface for MLVectorDB.
+Интерфейс StorageEngine для MLVectorDB.
 
-This module defines the StorageEngine Protocol interface which handles the
-persistent storage and retrieval of vectors and metadata.
+Модуль определяет Protocol-интерфейс StorageEngine для управления
+постоянным хранением и извлечением векторов и метаданных.
 """
 
 from typing import Protocol, List, Optional, Dict, Any, Iterator, Mapping
-from .vector import VectorProtocol
+from uuid import UUID
 from typing_extensions import runtime_checkable
+
+from .vector import VectorProtocol
 
 
 @runtime_checkable
 class StorageEngine(Protocol):
-    """
-    Protocol interface for StorageEngine in MLVectorDB.
-    
-    A StorageEngine handles the persistent storage, retrieval, and management
-    of vectors and their associated metadata on disk or in memory.
-    """
+    """Protocol-интерфейс для движков хранения в MLVectorDB."""
     
     @property
-    def storage_type(self) -> str:
-        """
-        Type of storage engine.
-        
-        Returns:
-            str: Storage type (e.g., "memory", "disk", "distributed")
-        """
-        raise NotImplementedError
+    def storage_type(self) -> str: raise NotImplementedError
     
     @property
-    def total_vectors(self) -> int:
-        """
-        Total number of vectors stored.
-        
-        Returns:
-            int: Number of stored vectors
-        """
-        raise NotImplementedError
+    def total_vectors(self) -> int: raise NotImplementedError
     
     @property
-    def storage_size(self) -> int:
-        """
-        Total storage size in bytes.
-        
-        Returns:
-            int: Storage size in bytes
-        """
-        raise NotImplementedError
+    def storage_size(self) -> int: raise NotImplementedError
 
-    def write(self, vector: VectorProtocol, namespace: str = "default") -> bool:
-        """
-        Store a vector persistently.
+    def write(self, vector: VectorProtocol, namespace: str) -> bool: raise NotImplementedError
 
-        Args:
-            vector: Vector to store
-            namespace: Namespace to write in
-
-        Returns:
-            bool: True if successfully stored, False otherwise
-        """
-        raise NotImplementedError
-
-    def write_vectors(self, vectors: List[VectorProtocol], namespace: str = "default") -> List[bool]:
-        """
-        Store multiple vectors persistently.
-        
-        Args:
-            vectors: List of vectors to store
-            namespace: Namespace to write in
-            
-        Returns:
-            List[bool]: List of success status for each vector
-        """
-        raise NotImplementedError
+    def write_vectors(self, vectors: List[VectorProtocol], namespace: str) -> List[bool]: raise NotImplementedError
     
-    def read(self, vector_id: str, namespace: str = "default") -> Optional[VectorProtocol]:
-        """
-        Retrieve a vector by its ID.
-        
-        Args:
-            vector_id: ID of vector to retrieve
-            namespace: Namespace to search in
-            
-        Returns:
-            Optional[VectorProtocol]: Vector if found, None otherwise
-        """
+    def read(self, vector_id: UUID, namespace: str) -> Optional[VectorProtocol]: raise NotImplementedError
+
+    def read_vectors(self, vector_ids: List[UUID], namespace: str) -> List[Optional[VectorProtocol]]:
         raise NotImplementedError
 
-    def read_vectors(self, vector_ids: List[str], namespace: str = "default") -> List[Optional[VectorProtocol]]:
-        """
-        Retrieve multiple vectors by their IDs.
+    def delete(self, vector_id: UUID, namespace: str) -> bool: raise NotImplementedError
 
-        Args:
-            vector_ids: List of vector IDs to retrieve
-            namespace: Namespace to search in
+    def exists(self, vector_id: UUID) -> bool: raise NotImplementedError
 
-        Returns:
-            List[Optional[Vector]]: List of vectors (None if not found)
-        """
-        raise NotImplementedError
-
-
-    def delete(self, vector_id: str, namespace: str = "default") -> bool:
-        """
-        Delete a vector from storage.
-        
-        Args:
-            vector_id: ID of vector to delete
-            namespace: Namespace to delete from
-            
-        Returns:
-            bool: True if successfully deleted, False otherwise
-        """
-        raise NotImplementedError
-
-    def exists(self, vector_id: str) -> bool:
-        """
-        Check if a vector exists in storage.
-        
-        Args:
-            vector_id: ID of vector to check
-            
-        Returns:
-            bool: True if exists, False otherwise
-        """
-        raise NotImplementedError
-
-    def iterate_vectors(
-            self,
-            namespace: str = "default",
-            batch_size: int = 100
-    ) -> Iterator[List[VectorProtocol]]:
-        """
-        Iterate over all vectors in a namespace in batches.
-
-        Args:
-            namespace: Namespace to iterate over
-            batch_size: Size of each batch
-
-        Yields:
-            List[VectorProtocol]: Batch of vectors
-        """
-        raise NotImplementedError
-
-    def clear_all(self) -> bool:
-        """
-        Clear all vectors from storage.
-        
-        Returns:
-            bool: True if successfully cleared, False otherwise
-        """
-        raise NotImplementedError
+    def clear_all(self) -> bool: raise NotImplementedError
     
     def get_storage_info(self) -> Dict[str, Any]:
-        """
-        Get detailed storage information and statistics.
-        
-        Returns:
-            Dict[str, Any]: Storage information and statistics
-        """
+        """Получить детальную информацию и статистику хранилища."""
         raise NotImplementedError
 
     @property
-    def namespace_map(self) -> Mapping[str, List[VectorProtocol]]:
-        """
-        Get mapping of namespaces to their vectors.
+    def namespace_map(self) -> Mapping[str, List[VectorProtocol]]: raise NotImplementedError
 
-        Returns:
-            Mapping[str, List[Vector]]: Namespace to vectors mapping
-        """
-        raise NotImplementedError
+    def delete_namespace(self, namespace: str) -> bool: raise NotImplementedError
+
+    @property
+    def list_namespaces(self) -> List[str]: raise NotImplementedError
