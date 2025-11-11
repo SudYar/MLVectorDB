@@ -5,7 +5,6 @@ from typing import Mapping, Any, Sequence
 import numpy as np
 from uuid import UUID
 from ..interfaces.vector import VectorProtocol
-from dataclasses import dataclass
 
 class Vector(VectorProtocol):
     def __init__(self, values: Sequence[float], metadata: Mapping[str, Any] | None = None) -> None:

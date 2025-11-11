@@ -1,76 +1,131 @@
-from typing import Iterable, Sequence, List, Dict, Optional
-import numpy as np
 import hnswlib
+import numpy as np
+from uuid import UUID
+from typing import Iterable, Sequence, List, Mapping, Dict
+from dataclasses import dataclass
+
 from ..interfaces.index import IndexProtocol, SearchResultProtocol
-from ..interfaces.vector import VectorProtocol
+from ..interfaces.vector import VectorProtocol, VectorDTO
 
+
+@dataclass
 class SearchResult(SearchResultProtocol):
-    def __init__(self, id: str, score: float, vector: VectorProtocol):
-        self.id = id
-        self.score = score
-        self.vector = vector
+    vector_id: UUID
+    score: float
 
-class HNSWIndex(IndexProtocol):
-    def __init__(self, dim: int, metric: str = "cosine") -> None:
-        self.dim = dim
-        self.metric = metric
-        self._spaces: Dict[str, hnswlib.Index] = {}
-        # TODO: load vectors from storage
-        self._vectors: Dict[str, Dict[int, VectorProtocol]] = {}
-        self._next_id: Dict[str, int] = {}
 
-    def _init_namespace(self, namespace: str) -> None:
-        if namespace in self._spaces:
+class Index(IndexProtocol):
+    def __init__(self, space: str = "l2", ef_construction: int = 200, M: int = 16):
+        self._indexes: Dict[str, hnswlib.Index] = {}
+        self._dim: Dict[str, int] = {}
+        self._uuid_to_label: Dict[str, Dict[UUID, int]] = {}
+        self._label_to_uuid: Dict[str, Dict[int, UUID]] = {}
+        self._space = space
+        self._ef_construction = ef_construction
+        self._M = M
+
+    def _get_or_create_index(self, namespace: str, dim: int, metric: str):
+        if namespace in self._indexes:
+            return self._indexes[namespace]
+
+        index = hnswlib.Index(space=metric, dim=dim)
+        index.init_index(max_elements=10_000, ef_construction=self._ef_construction, M=self._M)
+        index.set_ef(50)
+        self._indexes[namespace] = index
+        self._dim[namespace] = dim
+        self._uuid_to_label[namespace] = {}
+        self._label_to_uuid[namespace] = {}
+        return index
+
+    def add(self, vectors: Iterable[VectorProtocol], namespace: str) -> None:
+        vectors = list(vectors)
+        if not vectors:
             return
-        index = hnswlib.Index(space=self.metric, dim=self.dim)
-        index.init_index(max_elements=200, ef_construction=10, M=16)
-        index.set_ef(10)
-        self._spaces[namespace] = index
-        self._vectors[namespace] = {}
-        self._next_id[namespace] = 0
+        dim = vectors[0].values.shape[0]
+        index = self._get_or_create_index(namespace, dim, self._space)
+        current_count = index.get_current_count()
+        labels = []
+        data = []
+        for i, v in enumerate(vectors):
+            label = current_count + i
+            self._uuid_to_label[namespace][v.id] = label
+            self._label_to_uuid[namespace][label] = v.id
+            labels.append(label)
+            data.append(v.values)
+        index.add_items(np.array(data, dtype=np.float32), np.array(labels))
 
-    def add(self, vectors: Iterable[VectorProtocol], namespace: str = "default") -> None:
-        grouped: Dict[str, List[VectorProtocol]] = {}
-        for v in vectors:
-            grouped.setdefault(namespace, []).append(v)
-
-        for ns, vecs in grouped.items():
-            self._init_namespace(ns)
-            index = self._spaces[ns]
-            ids = []
-            data = []
-            for v in vecs:
-                internal_id = self._next_id[ns]
-                self._next_id[ns] += 1
-                ids.append(internal_id)
-                data.append(v.to_numpy())
-                self._vectors[ns][internal_id] = v
-            index.add_items(np.vstack(data), ids)
-
-    def remove(self, ids: Sequence[str], namespace: str = "default") -> None:
-        if namespace not in self._vectors:
+    def remove(self, ids: Sequence[UUID], namespace: str) -> None:
+        if namespace not in self._indexes:
             return
-        kept = [v for v in self._vectors[namespace].values() if v.id not in ids]
-        self.rebuild(kept, metric=self.metric)
+        index = self._indexes[namespace]
+        uuid_to_label = self._uuid_to_label[namespace]
+        label_to_uuid = self._label_to_uuid[namespace]
+        for uid in ids:
+            label = uuid_to_label.pop(uid, None)
+            if label is not None:
+                index.mark_deleted(label)
+                label_to_uuid.pop(label, None)
 
-    def search(self, query: np.ndarray, top_k: int, namespace: str = "default", metric: str = "cosine") -> List[SearchResult]:
-        if namespace not in self._spaces:
+    def search(
+    self,
+    query: VectorDTO,
+    top_k: int,
+    namespace: str,
+    metric: str
+    ) -> List[SearchResultProtocol]:
+        if namespace not in self._indexes:
             return []
-        index = self._spaces[namespace]
-        labels, distances = index.knn_query(query.reshape(1, -1), k=min(top_k, len(self._vectors[namespace])))
-        labels, distances = labels[0], distances[0]
-        results: List[SearchResult] = []
-        for lid, dist in zip(labels, distances):
-            vector = self._vectors[namespace].get(int(lid))
-            if vector is None:
-                continue
-            score = 1.0 - dist if metric == "cosine" else -dist
-            results.append(SearchResult(vector.id, float(score), vector))
+
+        index = self._indexes[namespace]
+        current_count = index.get_current_count()
+        if current_count == 0:
+            return []
+
+        top_k = min(top_k, current_count)
+        data = np.array([query.values], dtype=np.float32)
+
+        try:
+            labels, distances = index.knn_query(data, k=top_k)
+        except RuntimeError:
+            if top_k > 1:
+                try:
+                    labels, distances = index.knn_query(data, k=1)
+                except RuntimeError:
+                    return []
+            else:
+                return []
+
+        results: List[SearchResultProtocol] = []
+        for label, dist in zip(labels[0], distances[0]):
+            uid = self._label_to_uuid[namespace].get(int(label))
+            if uid is not None:
+                score = float(dist)
+                if metric == "cosine":
+                    score = 1 - score
+                results.append(SearchResult(vector_id=uid, score=score))
         return results
 
-    def rebuild(self, source: Iterable[VectorProtocol], metric: str = "cosine") -> None:
-        self.metric = metric
-        self._spaces.clear()
-        self._vectors.clear()
-        self._next_id.clear()
-        self.add(source)
+    def rebuild(
+        self,
+        source: Mapping[str, Iterable[VectorProtocol]],
+        metric: str
+    ) -> None:
+        self._indexes.clear()
+        self._uuid_to_label.clear()
+        self._label_to_uuid.clear()
+        self._dim.clear()
+
+        for namespace, vectors in source.items():
+            vectors = list(vectors)
+            if not vectors:
+                continue
+            dim = vectors[0].values.shape[0]
+            index = self._get_or_create_index(namespace, dim, metric)
+            labels = []
+            data = []
+            for i, v in enumerate(vectors):
+                self._uuid_to_label[namespace][v.id] = i
+                self._label_to_uuid[namespace][i] = v.id
+                labels.append(i)
+                data.append(v.values)
+            index.add_items(np.array(data, dtype=np.float32), np.array(labels))

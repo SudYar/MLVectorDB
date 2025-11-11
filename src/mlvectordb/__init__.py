@@ -16,7 +16,7 @@ from .interfaces.query_processor import QueryProcessorProtocol
 # Import implementations
 from .implementations.vector import Vector
 from .implementations.storage_engine_in_memory import StorageEngineInMemory
-from .implementations.index import HNSWIndex
+from .implementations.index import Index
 
 __all__ = [
     "VectorProtocol",
@@ -25,5 +25,5 @@ __all__ = [
     "QueryProcessorProtocol",
     "Vector",
     "StorageEngineInMemory",
-    "HNSWIndex",
+    "Index",
 ]
