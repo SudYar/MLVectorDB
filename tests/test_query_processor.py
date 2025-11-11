@@ -1,37 +1,16 @@
 import pytest
 import numpy as np
 from uuid import UUID
+
+from src.mlvectordb import StorageEngineInMemory
 from src.mlvectordb.implementations.query_processor import QueryProcessor
 from src.mlvectordb.implementations.index import Index
 from src.mlvectordb.interfaces.vector import VectorDTO
-from src.mlvectordb.implementations.vector import Vector
-
-
-class InMemoryStorageEngine:
-    def __init__(self):
-        self.namespaceMap = {}
-
-    def _ns(self, namespace: str):
-        return self.namespaceMap.setdefault(namespace, {})
-
-    def write(self, vector: Vector, namespace: str) -> None:
-        self._ns(namespace)[vector.id] = vector
-
-    def read(self, vector_id: UUID, namespace: str):
-        return self._ns(namespace).get(vector_id)
-
-    def read_batch(self, ids, namespace: str):
-        ns = self._ns(namespace)
-        return [ns[i] for i in ids if i in ns]
-
-    def delete(self, vector_id: UUID, namespace: str = "default") -> None:
-        ns = self._ns(namespace)
-        ns.pop(vector_id, None)
 
 
 @pytest.fixture
 def storage():
-    return InMemoryStorageEngine()
+    return StorageEngineInMemory()
 
 
 @pytest.fixture
@@ -62,10 +41,10 @@ def test_insert_and_storage_integrity(processor):
     processor.insert(v2)
 
     ns = "default"
-    stored_ids = list(processor._storage._ns(ns).keys())
-    assert len(stored_ids) == 2
+    count_vectors = processor._storage.total_vectors
+    assert count_vectors == 2
 
-    vectors = list(processor._storage._ns(ns).values())
+    vectors = processor._storage.namespace_map[ns]
     assert any(v.metadata["label"] == "A" for v in vectors)
     assert any(v.metadata["label"] == "B" for v in vectors)
 
@@ -118,7 +97,7 @@ def test_delete_removes_from_storage_and_index(processor):
     processor.delete(to_delete)
 
     ns = "default"
-    storage_data = processor._storage._ns(ns)
+    storage_data = processor._storage.namespace_map[ns]
     assert to_delete[0] not in storage_data
 
     after = processor.find_similar(query, top_k=2)
