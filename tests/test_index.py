@@ -1,90 +1,71 @@
 import pytest
 import numpy as np
-from src.mlvectordb.implementations.index import HNSWIndex
+from src.mlvectordb.implementations.index import Index
 from src.mlvectordb.implementations.vector import Vector
+from src.mlvectordb.interfaces.vector import VectorDTO
+
+
+@pytest.fixture(params=[2, 5, 100])
+def vector_count(request):
+    return request.param
+
 
 @pytest.fixture
-def vectors():
-    vectors = []
-    for i in range(100):
-        v = Vector(id=f"v{i}", values=np.random.rand(4).tolist())
-        vectors.append(v)
-    for i in range(10):
-        v = Vector(id=f"o{i}", values=np.random.rand(4).tolist(), namespace="other")
-        vectors.append(v)
-    return vectors
+def sample_vectors(vector_count):
+    np.random.seed(42)
+    data = np.random.rand(vector_count, 16).astype(np.float32)
+    return [Vector(values=v.tolist(), metadata={"i": i}) for i, v in enumerate(data)]
+
 
 @pytest.fixture
-def hnsw_index():
-    return HNSWIndex(dim=4, metric="cosine")
+def index():
+    return Index(space="l2")
 
-def test_add_and_count_vectors(hnsw_index, vectors):
-    hnsw_index.add(vectors)
-    assert "default" in hnsw_index._spaces
-    assert "other" in hnsw_index._spaces
-    assert len(hnsw_index._vectors["default"]) == 100
-    assert len(hnsw_index._vectors["other"]) == 10
 
-def test_search_top_k(hnsw_index, vectors):
-    hnsw_index.add(vectors)
-    query = np.random.rand(4)
-    top_k = 5
-    results = hnsw_index.search(query, top_k=top_k)
-    assert len(results) == top_k
+def test_add_and_search_various_sizes(index, sample_vectors):
+    namespace = "varied_ns"
+    index.add(sample_vectors, namespace)
+
+    query_vec = sample_vectors[0].values + np.random.normal(0, 0.01, size=sample_vectors[0].values.shape)
+    query = VectorDTO(values=query_vec, metadata={})
+
+    results = index.search(query, top_k=5, namespace=namespace, metric="l2")
+
+    assert len(results) > 0
+    ids = {v.id for v in sample_vectors}
     for r in results:
-        assert isinstance(r.id, str)
+        assert r.vector_id in ids
         assert isinstance(r.score, float)
-
-def test_remove_vector(hnsw_index, vectors):
-    hnsw_index.add(vectors)
-    remove_ids = [f"v{i}" for i in range(5)]
-    hnsw_index.remove(remove_ids)
-    remaining_ids = hnsw_index._vectors["default"].keys()
-    for rid in remove_ids:
-        assert rid not in [v.id for v in hnsw_index._vectors["default"].values()]
-
-def test_rebuild_index(hnsw_index, vectors):
-    default_vectors = [v for v in vectors[50:] if v.namespace == "default"]
-    other_vectors = [v for v in vectors[50:] if v.namespace == "other"]
-
-    hnsw_index.add(vectors[:50]) 
-    hnsw_index.rebuild(vectors[50:]) 
-
-    default_ids = [v.id for v in hnsw_index._vectors.get("default", {}).values()]
-    for v in default_vectors:
-        assert v.id in default_ids
-
-    other_ids = [v.id for v in hnsw_index._vectors.get("other", {}).values()]
-    for v in other_vectors:
-        assert v.id in other_ids
+        assert r.score >= 0.0
 
 
-def test_multiple_namespaces_search(hnsw_index, vectors):
-    hnsw_index.add(vectors)
-    query_default = np.random.rand(4)
-    query_other = np.random.rand(4)
-    results_default = hnsw_index.search(query_default, top_k=3, namespace="default")
-    results_other = hnsw_index.search(query_other, top_k=3, namespace="other")
-    assert all(r.id.startswith("v") for r in results_default)
-    assert all(r.id.startswith("o") for r in results_other)
+def test_remove_and_search_various_sizes(index, sample_vectors):
+    namespace = "remove_ns"
+    index.add(sample_vectors, namespace)
 
-def test_metric_change(hnsw_index, vectors):
-    hnsw_index.add(vectors[:50])
-    query = np.random.rand(4)
+    to_remove = [v.id for v in sample_vectors[:2]]
+    index.remove(to_remove, namespace)
 
-    cosine_results = hnsw_index.search(query, top_k=3)
-    hnsw_index.rebuild(vectors[:50], metric="l2")
-    l2_results = hnsw_index.search(query, top_k=3, metric="l2")
+    query = VectorDTO(values=sample_vectors[0].values, metadata={})
+    results = index.search(query, top_k=5, namespace=namespace, metric="l2")
 
-    assert len(cosine_results) == 3
-    assert len(l2_results) == 3
+    removed_ids = set(to_remove)
+    result_ids = {r.vector_id for r in results}
+    assert not (removed_ids & result_ids)
 
-    valid_ids = {v.id for v in vectors[:50]}
-    for res in cosine_results + l2_results:
-        assert res.id in valid_ids
-        assert isinstance(res.score, float)
 
-    cosine_scores = [r.score for r in cosine_results]
-    l2_scores = [r.score for r in l2_results]
-    assert cosine_scores != l2_scores
+def test_rebuild_many(index, sample_vectors):
+    half = len(sample_vectors) // 2 or 1
+    source = {
+        "ns1": sample_vectors[:half],
+        "ns2": sample_vectors[half:],
+    }
 
+    index.rebuild(source, metric="l2")
+
+    for ns in source.keys():
+        q_vec = source[ns][0].values
+        q = VectorDTO(values=q_vec, metadata={})
+        results = index.search(q, top_k=3, namespace=ns, metric="l2")
+        assert len(results) > 0
+        assert results[0].vector_id in [v.id for v in source[ns]]
