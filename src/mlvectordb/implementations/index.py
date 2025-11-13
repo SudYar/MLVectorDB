@@ -15,7 +15,7 @@ class SearchResult(SearchResultProtocol):
 
 
 class Index(IndexProtocol):
-    def __init__(self, space: str = "l2", ef_construction: int = 200, M: int = 16):
+    def __init__(self, space: str = "l2", ef_construction: int = 200, M: int = 16, rebuild_threshold: float = 0.2):
         self._indexes: Dict[str, hnswlib.Index] = {}
         self._dim: Dict[str, int] = {}
         self._uuid_to_label: Dict[str, Dict[UUID, int]] = {}
@@ -23,6 +23,11 @@ class Index(IndexProtocol):
         self._space = space
         self._ef_construction = ef_construction
         self._M = M
+
+        self._total_counts: Dict[str, int] = {}
+        self._deleted_counts: Dict[str, int] = {}
+        self._is_rebuild_required: Dict[str, bool] = {}
+        self._rebuild_threshold: float = rebuild_threshold
 
     def _get_or_create_index(self, namespace: str, dim: int, metric: str):
         if namespace in self._indexes:
@@ -35,6 +40,11 @@ class Index(IndexProtocol):
         self._dim[namespace] = dim
         self._uuid_to_label[namespace] = {}
         self._label_to_uuid[namespace] = {}
+
+        self._total_counts[namespace] = 0
+        self._deleted_counts[namespace] = 0
+        self._is_rebuild_required[namespace] = False
+
         return index
 
     def add(self, vectors: Iterable[VectorProtocol], namespace: str) -> None:
@@ -54,17 +64,29 @@ class Index(IndexProtocol):
             data.append(v.values)
         index.add_items(np.array(data, dtype=np.float32), np.array(labels))
 
+        self._total_counts[namespace] += len(vectors)
+
     def remove(self, ids: Sequence[UUID], namespace: str) -> None:
         if namespace not in self._indexes:
             return
         index = self._indexes[namespace]
         uuid_to_label = self._uuid_to_label[namespace]
         label_to_uuid = self._label_to_uuid[namespace]
+
+        removed = 0
         for uid in ids:
             label = uuid_to_label.pop(uid, None)
             if label is not None:
                 index.mark_deleted(label)
                 label_to_uuid.pop(label, None)
+                removed += 1
+
+        self._deleted_counts[namespace] += removed
+        total = max(1, self._total_counts[namespace])
+        deleted_ratio = self._deleted_counts[namespace] / total
+
+        if deleted_ratio >= self._rebuild_threshold:
+            self._is_rebuild_required[namespace] = True
 
     def search(
         self,
@@ -77,11 +99,12 @@ class Index(IndexProtocol):
             return []
 
         index = self._indexes[namespace]
-        current_count = index.get_current_count()
-        if current_count == 0:
+
+        active_count = self._total_counts[namespace] - self._deleted_counts[namespace]
+        if active_count == 0:
             return []
 
-        top_k = min(top_k, current_count)
+        top_k = min(top_k, active_count)
         data = np.array([query.values], dtype=np.float32)
 
         try:
@@ -115,6 +138,10 @@ class Index(IndexProtocol):
         self._label_to_uuid.clear()
         self._dim.clear()
 
+        self._total_counts.clear()
+        self._deleted_counts.clear()
+        self._is_rebuild_required.clear()
+
         for namespace, vectors in source.items():
             vectors = list(vectors)
             if not vectors:
@@ -129,3 +156,10 @@ class Index(IndexProtocol):
                 labels.append(i)
                 data.append(v.values)
             index.add_items(np.array(data, dtype=np.float32), np.array(labels))
+
+            self._total_counts[namespace] = len(vectors)
+            self._deleted_counts[namespace] = 0
+            self._is_rebuild_required[namespace] = False
+
+    def is_rebuild_required(self, namespace: str) -> bool:
+        return self._is_rebuild_required.get(namespace, False)
