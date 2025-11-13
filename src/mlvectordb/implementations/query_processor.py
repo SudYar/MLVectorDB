@@ -75,5 +75,5 @@ class QueryProcessor(QueryProcessorProtocol):
     def get_namespace_count(self, namespace: str) -> int:
         return len(self._storage.namespace_map.get(namespace, []))
 
-    def get_namespace_info(self) -> Dict[str, Any]:
+    def get_storage_info(self) -> Dict[str, Any]:
         return self._storage.get_storage_info()

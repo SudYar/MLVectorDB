@@ -40,6 +40,12 @@ class BatchVectorRequest(BaseModel):
     vectors: List[VectorCreateRequest] = Field(..., description="Список векторов")
 
 
+class VectorInfo(BaseModel):
+    id: UUID
+    values: List[float]
+    metadata: Dict[str, Any]
+
+
 class RestAPI:
     def __init__(
             self,
@@ -238,6 +244,50 @@ class RestAPI:
                     detail=f"Delete failed: {str(e)}"
                 )
 
+        @self.app.get("/namespaces")
+        async def list_namespaces():
+            """Получение списка всех пространств имен"""
+            self.logger.info("Запрос на получение списка пространств имен")
+            try:
+                namespaces = self.query_processor.list_namespaces()
+                self.logger.info(f"Найдено {len(namespaces)} пространств: {namespaces}")
+                return {"namespaces": namespaces}
+            except Exception as e:
+                self.logger.error(f"Ошибка получения списка пространств: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to list namespaces: {str(e)}"
+                )
+
+        @self.app.get("/namespaces/vectors", response_model=List[VectorInfo])
+        async def get_namespace_vectors(namespace: str = Query("default", description="Namespace vectors from")):
+            """Получение всех векторов в пространстве имен"""
+            self.logger.info(f"Запрос на получение векторов в пространстве: {namespace}")
+            try:
+                vectors = self.query_processor.get_namespace_vectors(namespace)
+                self.logger.info(f"Найдено {len(vectors)} векторов в пространстве: {namespace}")
+                return vectors
+            except Exception as e:
+                self.logger.error(f"Ошибка получения векторов для пространства {namespace}: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to get vectors: {str(e)}"
+                )
+
+        @self.app.get("/storage/info")
+        async def get_storage_info():
+            """Получение информации о хранилище"""
+            self.logger.info("Запрос на получение информации о хранилище")
+            try:
+                info = self.query_processor.get_storage_info()
+                self.logger.info(f"Информация о хранилище: {info}")
+                return info
+            except Exception as e:
+                self.logger.error(f"Ошибка получения информации о хранилище: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to get storage info: {str(e)}"
+                )
         @self.app.get("/health")
         async def health_check():
             """Проверка работоспособности API"""
