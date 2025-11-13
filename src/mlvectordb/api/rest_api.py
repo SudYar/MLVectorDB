@@ -221,15 +221,16 @@ class RestAPI:
                 )
 
             try:
-                self.query_processor.delete(delete_request.ids, namespace)
+                del_uuid = self.query_processor.delete(delete_request.ids, namespace)
 
                 self.logger.info(
                     f"Удаление завершено успешно - "
-                    f"{len(delete_request.ids)} векторов удалено из пространства: {namespace}"
+                    f"{len(del_uuid)} векторов удалено из пространства: {namespace}"
                 )
+                self.logger.debug(f"uuid удаленных векторов: {del_uuid}")
                 return {
-                    "status": "success",
-                    "message": f"{len(delete_request.ids)} vectors deleted"
+                    "status": f"{'success' if len(del_uuid) else 'error'}",
+                    "message": f"{len(del_uuid)} vectors deleted"
                 }
 
             except Exception as e:

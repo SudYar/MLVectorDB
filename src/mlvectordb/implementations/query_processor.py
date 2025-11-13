@@ -48,15 +48,18 @@ class QueryProcessor(QueryProcessorProtocol):
                 })
         return enriched
 
-    def delete(self, ids: Sequence[UUID], namespace: str = "default") -> None:
+    def delete(self, ids: Sequence[UUID], namespace: str = "default") -> Sequence[UUID]:
+        del_id = []
         for vid in ids:
-            self._storage.delete(vid, namespace)
+            if self._storage.delete(vid, namespace):
+                del_id.append(vid)
         self._index.remove(ids, namespace)
 
         if getattr(self._index, "is_rebuild_required", None):
             if self._index.is_rebuild_required(namespace):
                 source = {namespace: self._storage.namespace_map.get(namespace, [])}
                 self._index.rebuild(source, metric=self._index._space)
+        return del_id
 
     def list_namespaces(self) -> List[str]:
         return self._storage.list_namespaces
