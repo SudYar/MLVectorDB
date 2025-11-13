@@ -80,7 +80,7 @@ class Index(IndexProtocol):
         current_count = index.get_current_count()
         if current_count == 0:
             return []
-
+        # TODO тут есть баг, current_count считает с удаленными векторами. Далее при передаче происходит runtime ошибка и в итоге получаем один результат:(
         top_k = min(top_k, current_count)
         data = np.array([query.values], dtype=np.float32)
 

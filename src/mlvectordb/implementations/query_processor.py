@@ -53,3 +53,4 @@ class QueryProcessor(QueryProcessorProtocol):
         for vid in ids:
             self._storage.delete(vid, namespace)
         self._index.remove(ids, namespace)
+# todo Очень нужен метод чтения какого-то namespace и числа namespace (брать из storage). Иначе трудно работать в апи без дебага
