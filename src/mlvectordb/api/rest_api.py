@@ -140,7 +140,7 @@ class RestAPI:
                     for vector in batch_request.vectors
                 ]
                 self.logger.debug(f"Вызов query_processor.upsert_many с {len(vectors_dto)} векторами")
-                self.query_processor.upsert_many(vectors_dto)
+                self.query_processor.upsert_many(vectors_dto, namespace)
 
                 self.logger.info(
                     f"Массовый upsert завершен успешно - "
