@@ -37,21 +37,74 @@ def main():
         choices=["debug", "info", "warning", "error"],
         help="Log level (default: info)"
     )
+    parser.add_argument(
+        "--enable-replication",
+        action="store_true",
+        help="Enable replication support"
+    )
+    parser.add_argument(
+        "--enable-sharding",
+        action="store_true",
+        help="Enable sharding support"
+    )
     
     args = parser.parse_args()
     
     print(f"Starting MLVectorDB API server on {args.host}:{args.port}")
     print(f"API documentation available at: http://{args.host}:{args.port}/docs")
     print(f"Interactive API docs at: http://{args.host}:{args.port}/redoc")
-
+    if args.enable_replication:
+        print("Replication: ENABLED")
+    if args.enable_sharding:
+        print("Sharding: ENABLED")
 
     from src.mlvectordb.implementations.query_processor import QueryProcessor
+    from src.mlvectordb.implementations.query_processor_with_replication import QueryProcessorWithReplication
     from src.mlvectordb import StorageEngineInMemory
     from src.mlvectordb.implementations.index import Index
     from src.mlvectordb.api.rest_api import RestAPI
 
     # Инициализация компонентов
-    qproc = QueryProcessor(StorageEngineInMemory(), Index())
+    primary_storage = StorageEngineInMemory()
+    index = Index()
+    
+    # Настройка репликации и шардирования
+    replication_manager = None
+    sharding_manager = None
+    
+    if args.enable_replication or args.enable_sharding:
+        from src.mlvectordb.implementations.replication_manager import ReplicationManagerImpl
+        from src.mlvectordb.implementations.sharding_manager import ShardingManagerImpl
+        
+        if args.enable_replication:
+            replication_manager = ReplicationManagerImpl(
+                primary_storage=primary_storage,
+                primary_replica_id="primary",
+                health_check_interval=5.0
+            )
+            print("Replication manager initialized")
+        
+        if args.enable_sharding:
+            # Создаем локальные шарды
+            shard_storages = {
+                "shard_0": StorageEngineInMemory(),
+                "shard_1": StorageEngineInMemory(),
+            }
+            sharding_manager = ShardingManagerImpl(
+                shard_storages=shard_storages,
+                sharding_strategy="hash",
+                health_check_interval=5.0
+            )
+            print(f"Sharding manager initialized with {len(shard_storages)} local shards")
+        
+        qproc = QueryProcessorWithReplication(
+            storage_engine=primary_storage,
+            index=index,
+            replication_manager=replication_manager,
+            sharding_manager=sharding_manager
+        )
+    else:
+        qproc = QueryProcessor(primary_storage, index)
 
     # Создание API с кастомными настройками
     api = RestAPI(
