@@ -14,6 +14,7 @@ MLVectorDB is a Python-based vector database system designed to efficiently stor
 - **Extensible**: Easy to implement custom storage engines, index types, and query processors
 - **Type Safe**: Full type hints and Protocol compliance checking
 - **Production Ready**: Comprehensive logging, error handling, and API documentation
+- **Replication Support**: Built-in replication for high availability and fault tolerance
 
 ## Installation
 
@@ -93,12 +94,12 @@ classDiagram
     class Vector {
         +UUID id
         +np.array values
-        +Mapping<str, Any> metadata
+        +Mapping~str, Any~ metadata
     }
-	
-	class VectorDTO {
+    
+    class VectorDTO {
         +np.array values
-        +Mapping<str, Any> metadata
+        +Mapping~str, Any~ metadata
     }
 
     class SearchResult {
@@ -108,63 +109,77 @@ classDiagram
     }
 
     class StorageEngine {
+        <<interface>>
         +write(vector: Vector, namespace: str) None
-        +read(vector_id: UUID, namespace: str) Vector?
-        +read_batch(ids: Sequence<str>, namespace: str) Iterable <Vector>
-        +delete(vector_id: UUID, namespace: str=DEFAULT) None
-        +namespaceMap<str , list<Vector>>
+        +read(vector_id: UUID, namespace: str) Vector
+        +read_batch(ids: Sequence~str~, namespace: str) Iterable~Vector~
+        +delete(vector_id: UUID, namespace: str) None
+        +namespace_map: Map~str, List~Vector~~
     }
 
     class Index {
-        +add(vectors: Iterable<Vector>) None
-        +remove(ids: Sequence<str>, namespace: str=DEFAULT) None
-        +search(query: VectorDTO, top_k: int, namespace: str=DEFAULT, filter: Filter?, metric: Metric="cosine") Iterable<SearchResult>
-        +rebuild(source: Mapping[str, List[Vector]], metric: Metric="cosine") None
-        +dimension() int?
+        <<interface>>
+        +add(vectors: Iterable~Vector~) None
+        +remove(ids: Sequence~str~, namespace: str) None
+        +search(query: VectorDTO, top_k: int, namespace: str, metric: str) Iterable~SearchResult~
+        +rebuild(source: Map, metric: str) None
+        +dimension: int
     }
 
-
     class QueryProcessor {
-        +insert(vector: Vector) None
-        +upsert_many(vectors: Iterable<Vector>) None
-        +find_similar(query: VectorDTO, top_k: int, namespace: str=DEFAULT, filter: Filter?, metric: Metric="cosine") Iterable<SearchResult>
-        +delete(vector_id: UUID, namespace: str=DEFAULT) None
+        <<interface>>
+        +insert(vector: VectorDTO, namespace: str) None
+        +upsert_many(vectors: Iterable~VectorDTO~, namespace: str) None
+        +find_similar(query: VectorDTO, top_k: int, namespace: str, metric: str) Iterable~SearchResult~
+        +delete(ids: Sequence~UUID~, namespace: str) Sequence~UUID~
+    }
+
+    class ReplicationManager {
+        <<interface>>
+        +replica_count: int
+        +primary_replica: str
+        +add_replica(replica_id: str, replica_url: str) bool
+        +remove_replica(replica_id: str) bool
+        +replicate_write(vector: Vector, namespace: str) Dict
+        +replicate_delete(vector_id: UUID, namespace: str) Dict
+        +replicate_batch_write(vectors: Sequence, namespace: str) Dict
+        +check_replica_health(replica_id: str) bool
+        +check_all_replicas_health() Dict
+        +sync_replica(replica_id: str, namespace: str) bool
+        +list_replicas() List~str~
+    }
+
+    class QueryProcessorWithReplication {
+        +replication_manager: ReplicationManager
+        +insert(vector: VectorDTO, namespace: str) None
+        +upsert_many(vectors: Iterable~VectorDTO~, namespace: str) None
+        +delete(ids: Sequence~UUID~, namespace: str) Sequence~UUID~
     }
 
     class RestAPI {
         +insert_vector(vector: VectorDTO) None
-        +search_vectors(query: Embedding, top_k: int, namespace: str=DEFAULT, filter: Filter?, metric: Metric="cosine") Iterable<SearchResult>
-        +delete_vector(vector_id: UUID, namespace: str=DEFAULT) None
+        +search_vectors(query: VectorDTO, top_k: int, namespace: str, metric: str) Iterable~SearchResult~
+        +delete_vector(vector_id: UUID, namespace: str) None
         +health() Mapping
+        +replication_info() Dict
+        +add_replica(replica_id: str, replica_url: str) None
+        +remove_replica(replica_id: str) None
     }
 
-
-    class ReplicationManager {
-        <<interface>>
-        +replicate_write(vector: Vector) None
-        +replicate_delete(vector_id: UUID, namespace: str=DEFAULT) None
-        +reconcile(namespace: str=DEFAULT) None
-        +members() Sequence<str>
-    }
-
-    class ShardingManager {
-        <<interface>>
-        +shard_for_vector(vector: Vector) str
-        +shard_for_id(vector_id: UUID, namespace: str=DEFAULT) str
-        +all_shards() Sequence<str>
-    }	
-
-    %% Relationships
+    %% Core Relationships
     QueryProcessor --> Index : uses
     QueryProcessor --> StorageEngine : uses
-    %%  QueryProcessor -- ReplicationManager : syncs with
-    %%  QueryProcessor -- ShardingManager : distributes via
     RestAPI --> QueryProcessor : forwards requests
     RestAPI -- VectorDTO : uses
     Index --> Vector : indexes
     StorageEngine --> Vector : stores
     QueryProcessor --> SearchResult : returns
     Index --> SearchResult : produces
+    
+    %% Replication Relationships
+    QueryProcessorWithReplication --|> QueryProcessor : extends
+    QueryProcessorWithReplication --> ReplicationManager : replicates via
+    ReplicationManager --> StorageEngine : syncs to replicas
     
 ```
 
@@ -339,32 +354,194 @@ FastAPI-based REST interface providing HTTP access to QueryProcessor functionali
 - CORS support for web applications
 - Query statistics tracking
 - Result caching capabilities
+- Replication management endpoints
+
+### 6. ReplicationManager (Protocol)
+
+Manages data replication across multiple storage replicas for high availability and fault tolerance.
+
+**Key Methods:**
+- `add_replica(replica_id, replica_url)` - Add a new replica
+- `remove_replica(replica_id)` - Remove a replica
+- `replicate_write(vector, namespace)` - Replicate vector write to all replicas
+- `replicate_delete(vector_id, namespace)` - Replicate vector deletion
+- `replicate_batch_write(vectors, namespace)` - Batch replication
+- `check_replica_health(replica_id)` - Check single replica health
+- `check_all_replicas_health()` - Check all replicas health
+- `sync_replica(replica_id)` - Full synchronization of a replica
+
+**Attributes:**
+- `replica_count: int` - Number of active healthy replicas
+- `primary_replica: str` - Primary replica identifier
+
+**Features:**
+- Dynamic replica addition/removal without restart
+- Automatic health checking of replicas
+- Asynchronous replication (non-blocking writes)
+- Error handling with graceful degradation
+- Batch operations support
+
+**UML Representation:**
+```
+┌─────────────────────────────────────┐
+│        ReplicationManager           │
+│            <<Protocol>>             │
+├─────────────────────────────────────┤
+│ + replica_count: int               │
+│ + primary_replica: str             │
+├─────────────────────────────────────┤
+│ + add_replica(id, url): bool       │
+│ + remove_replica(id): bool         │
+│ + replicate_write(vec, ns): Dict   │
+│ + replicate_delete(id, ns): Dict   │
+│ + replicate_batch_write(...): Dict │
+│ + check_replica_health(id): bool   │
+│ + check_all_replicas_health(): Dict│
+│ + sync_replica(id, ns): bool       │
+│ + list_replicas(): List[str]       │
+└─────────────────────────────────────┘
+```
+
+## Replication
+
+MLVectorDB supports data replication for high availability and fault tolerance. When replication is enabled, all write operations are automatically propagated to configured replicas.
+
+### Replication Architecture
+
+```
+┌─────────────────────┐
+│   Primary Node      │
+│  ┌───────────────┐  │
+│  │ StorageEngine │  │
+│  │   (Master)    │  │
+│  └───────────────┘  │
+│         │           │
+│  ┌──────▼────────┐  │
+│  │ Replication   │  │
+│  │   Manager     │  │
+│  └──────┬────────┘  │
+└─────────┼───────────┘
+          │ HTTP API
+          │
+  ┌───────┴───────┐
+  │               │
+  ▼               ▼
+┌─────────┐   ┌─────────┐
+│Replica 1│   │Replica 2│
+│ :8001   │   │ :8002   │
+└─────────┘   └─────────┘
+```
+
+### Enabling Replication
+
+#### Server with Replication
+
+```bash
+python -m mlvectordb.api.server --enable-replication --port 8000
+```
+
+#### Programmatic API
+
+```python
+from mlvectordb.implementations.storage_engine_in_memory import StorageEngineInMemory
+from mlvectordb.implementations.index import Index
+from mlvectordb.implementations.replication_manager import ReplicationManagerImpl
+from mlvectordb.implementations.query_processor_with_replication import QueryProcessorWithReplication
+
+# Create primary storage and replication manager
+primary_storage = StorageEngineInMemory()
+replication_manager = ReplicationManagerImpl(
+    primary_storage=primary_storage,
+    primary_replica_id="primary",
+    health_check_interval=5.0  # Health check every 5 seconds
+)
+
+# Add replicas
+replication_manager.add_replica("replica_1", "http://localhost:8001")
+replication_manager.add_replica("replica_2", "http://localhost:8002")
+
+# Create QueryProcessor with replication support
+qproc = QueryProcessorWithReplication(
+    storage_engine=primary_storage,
+    index=Index(),
+    replication_manager=replication_manager
+)
+
+# Vector insertions are automatically replicated
+from mlvectordb.interfaces.vector import VectorDTO
+vector = VectorDTO(values=[1.0, 2.0, 3.0], metadata={"category": "test"})
+qproc.insert(vector, namespace="default")
+```
+
+### Replication REST API
+
+```bash
+# Get replication info
+curl http://localhost:8000/replication/info
+
+# Add a replica
+curl -X POST "http://localhost:8000/replication/replicas?replica_id=replica_1&replica_url=http://localhost:8001"
+
+# Remove a replica
+curl -X DELETE http://localhost:8000/replication/replicas/replica_1
+
+# Check replica health
+curl http://localhost:8000/replication/replicas/replica_1/health
+
+# Check all replicas health
+curl http://localhost:8000/replication/replicas/health
+```
+
+### Replication Features
+
+| Feature | Description |
+|---------|-------------|
+| **Dynamic Management** | Add/remove replicas without service restart |
+| **Health Monitoring** | Automatic background health checks |
+| **Async Replication** | Non-blocking write operations |
+| **Error Tolerance** | Writes succeed even if replicas are unavailable |
+| **Batch Support** | Efficient bulk replication |
+| **Full Sync** | Complete replica synchronization on demand |
 
 ## System Relationships
 
 ```
-     ┌─────────────────┐      ┌─────────────────┐
-     │   REST API      │◄─────┤   API Client    │
-     │   (FastAPI)     │      │  (HTTP Requests)│
-     └─────────┬───────┘      └─────────────────┘
-               │
-               │ uses
-               ▼
-     ┌─────────────────┐
-     │ QueryProcessor  │ ──── Coordinates queries
-     └─────────┬───────┘
-               │
-               │ uses
-               ▼
-     ┌─────────────────┐      ┌─────────────────┐
-     │      Index      │◄────►│ StorageEngine   │
-     └─────────┬───────┘      └─────────┬───────┘
-               │                        │
-               │ indexes                 │ stores
-               ▼                        ▼
-     ┌─────────────────┐                │
-     │     Vector      │◄───────────────┘
-     └─────────────────┘
+                                ┌─────────────────┐
+                                │   API Client    │
+                                │  (HTTP Requests)│
+                                └────────┬────────┘
+                                         │
+                                         ▼
+                          ┌──────────────────────────┐
+                          │        REST API          │
+                          │        (FastAPI)         │
+                          └──────────────┬───────────┘
+                                         │ uses
+                                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│               QueryProcessorWithReplication                      │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                    QueryProcessor                        │   │
+│  │  ┌─────────────────┐      ┌─────────────────┐            │   │
+│  │  │      Index      │◄────►│ StorageEngine   │            │   │
+│  │  │                 │      │   (Primary)     │            │   │
+│  │  └─────────────────┘      └─────────────────┘            │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│                              │ replicates via                    │
+│                              ▼                                   │
+│                ┌─────────────────────────┐                       │
+│                │   ReplicationManager    │                       │
+│                └────────────┬────────────┘                       │
+└─────────────────────────────┼───────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              │               │               │
+              ▼               ▼               ▼
+     ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+     │  Replica 1   │ │  Replica 2   │ │  Replica N   │
+     │  (HTTP API)  │ │  (HTTP API)  │ │  (HTTP API)  │
+     └──────────────┘ └──────────────┘ └──────────────┘
 ```
 
 ## Development
@@ -394,23 +571,29 @@ flake8 src/ tests/
 ```
 mlvectordb/
 ├── src/mlvectordb/
-│   ├── interfaces/          # Protocol definitions
+│   ├── interfaces/              # Protocol definitions
 │   │   ├── vector.py
 │   │   ├── index.py
 │   │   ├── storage_engine.py
-│   │   └── query_processor.py
-│   ├── implementations/     # Concrete implementations
-│   │   ├── simple_vector.py
-│   │   └── basic_query_processor.py
-│   └── api/                # REST API
-│       ├── main.py         # FastAPI application
-│       ├── models.py       # Pydantic models
-│       └── server.py       # Server CLI
-├── examples/               # Usage examples
-│   └── api_client.py      # API client example
-├── tests/                 # Test suite
-├── pyproject.toml        # Project configuration
-└── README.md            # This file
+│   │   ├── query_processor.py
+│   │   └── replication.py       # ReplicationManager protocol
+│   ├── implementations/         # Concrete implementations
+│   │   ├── vector.py
+│   │   ├── index.py
+│   │   ├── storage_engine_in_memory.py
+│   │   ├── query_processor.py
+│   │   ├── query_processor_with_replication.py  # Extended QueryProcessor
+│   │   └── replication_manager.py               # ReplicationManager implementation
+│   └── api/                    # REST API
+│       ├── main.py             # FastAPI application
+│       ├── models.py           # Pydantic models
+│       └── server.py           # Server CLI
+├── examples/                   # Usage examples
+│   └── api_client.py          # API client example
+├── tests/                     # Test suite
+├── pyproject.toml            # Project configuration
+├── REPLICATION_SHARDING.md   # Detailed replication/sharding docs
+└── README.md                # This file
 ```
 
 ## API Examples
@@ -496,6 +679,11 @@ curl http://localhost:8000/statistics
 2. Create new index types by implementing the `Index` protocol  
 3. Add custom query processors using the `QueryProcessor` protocol
 4. Extend vector functionality through the `Vector` protocol
+5. Create custom replication strategies by implementing the `ReplicationManager` protocol
+
+## Further Reading
+
+- [Replication and Sharding Documentation](REPLICATION_SHARDING.md) - Detailed documentation on replication setup and configuration
 
 ## License
 
