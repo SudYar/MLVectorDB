@@ -7,9 +7,9 @@ Usage:
     or
     python scripts/run_api.py
 """
-
 import uvicorn
 import argparse
+import requests
 
 
 def main():
@@ -39,8 +39,17 @@ def main():
     )
     parser.add_argument(
         "--enable-replication",
-        action="store_true",
-        help="Enable replication support"
+        choices=["primary", "replica"],
+        help="Choose replication support"
+    )
+    parser.add_argument(
+        "--primary-url",
+        default="http://localhost:8000/replication/replicas",
+        help="Send primary url"
+    )
+    parser.add_argument(
+        "--replica-name",
+        help="Name this replica"
     )
     parser.add_argument(
         "--enable-sharding",
@@ -77,13 +86,19 @@ def main():
         from src.mlvectordb.implementations.sharding_manager import ShardingManagerImpl
         
         if args.enable_replication:
-            replication_manager = ReplicationManagerImpl(
-                primary_storage=primary_storage,
-                primary_replica_id="primary",
-                health_check_interval=5.0
-            )
-            print("Replication manager initialized")
-        
+            if "primary" == args.enable_replication:
+                replication_manager = ReplicationManagerImpl(
+                    primary_storage=primary_storage,
+                    primary_replica_id="primary",
+                    health_check_interval=5.0
+                )
+                print("Primary replication manager initialized")
+            if "replica" == args.enable_replication:
+                if args.replica_name and args.primary_url:
+                    request = requests.post(url=f"{args.primary_url}/replication/replicas", params={
+                        "replica_id": args.replica_name,
+                        "replica_url": f"http://{args.host}:{args.port}"
+                    })
         if args.enable_sharding:
             # Создаем локальные шарды
             shard_storages = {
@@ -96,7 +111,7 @@ def main():
                 health_check_interval=5.0
             )
             print(f"Sharding manager initialized with {len(shard_storages)} local shards")
-        
+
         qproc = QueryProcessorWithReplication(
             storage_engine=primary_storage,
             index=index,
