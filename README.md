@@ -1,104 +1,20 @@
 # MLVectorDB
 
-A Vector Database implementation for Big Data Infrastructure course (Infrastructure for Big Data / Foundations of High-Load Application Design).
+Векторная база данных для курса "Инфраструктура больших данных" (Infrastructure for Big Data / Foundations of High-Load Application Design).
 
-MLVectorDB is a Python-based vector database system designed to efficiently store, index, and query high-dimensional vectors. It provides a clean interface architecture using Python Protocols, making it extensible and easy to implement different storage engines, indexing algorithms, and query processors.
-
-## Features
-
-- **Protocol-based Architecture**: Clean interfaces defined using Python Protocols for maximum flexibility
-- **Vector Operations**: Support for distance calculations, similarity searches, and vector normalization
-- **Modular Design**: Separate components for storage, indexing, and query processing
-- **REST API**: Full HTTP API for accessing QueryProcessor functionality with FastAPI
-- **Multiple Query Types**: KNN, range search, similarity search, metadata filtering, and hybrid queries
-- **Extensible**: Easy to implement custom storage engines, index types, and query processors
-- **Type Safe**: Full type hints and Protocol compliance checking
-- **Production Ready**: Comprehensive logging, error handling, and API documentation
-
-## Installation
-
-```bash
-pip install -e .
-```
-
-## Quick Start
-
-### Using the Vector Classes Directly
-
-```python
-import numpy as np
-from mlvectordb.implementations.simple_vector import SimpleVector
-
-# Create vectors
-vector1 = SimpleVector("doc1", np.array([1.0, 2.0, 3.0]), {"category": "text"})
-vector2 = SimpleVector("doc2", np.array([2.0, 3.0, 4.0]), {"category": "text"})
-
-# Calculate distance and similarity
-distance = vector1.distance(vector2, metric="euclidean")
-similarity = vector1.similarity(vector2, metric="cosine")
-
-print(f"Distance: {distance}")
-print(f"Similarity: {similarity}")
-```
-
-### Using the REST API
-
-Start the API server:
-
-```bash
-python -m mlvectordb.api.server --port 8000
-```
-
-Then make HTTP requests:
-
-```bash
-# Health check
-curl http://localhost:8000/health
-
-# KNN query
-curl -X POST http://localhost:8000/query/knn \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "knn",
-    "vector": [1.0, 2.0, 3.0],
-    "k": 5
-  }'
-
-# Range query
-curl -X POST http://localhost:8000/query/range \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "range", 
-    "vector": [0.5, 1.5, 2.5],
-    "radius": 2.0
-  }'
-```
-
-### API Documentation
-
-Once the server is running, visit:
-- Interactive API docs: `http://localhost:8000/docs`
-- Alternative docs: `http://localhost:8000/redoc`
-
-## Architecture Overview
-
-MLVectorDB follows a layered architecture with the following core components:
-
-### Protocol Interfaces
-
-All components are defined as Python Protocols, ensuring type safety and enabling multiple implementations.
+## Архитектура системы
 
 ```mermaid
 classDiagram
     class Vector {
         +UUID id
         +np.array values
-        +Mapping<str, Any> metadata
+        +Mapping~str, Any~ metadata
     }
-	
-	class VectorDTO {
+    
+    class VectorDTO {
         +np.array values
-        +Mapping<str, Any> metadata
+        +Mapping~str, Any~ metadata
     }
 
     class SearchResult {
@@ -109,348 +25,135 @@ classDiagram
 
     class StorageEngine {
         +write(vector: Vector, namespace: str) None
-        +read(vector_id: UUID, namespace: str) Vector?
-        +read_batch(ids: Sequence<str>, namespace: str) Iterable <Vector>
-        +delete(vector_id: UUID, namespace: str=DEFAULT) None
-        +namespaceMap<str , list<Vector>>
+        +read(vector_id: UUID, namespace: str) Vector
+        +read_batch(ids: Sequence~str~, namespace: str) Iterable~Vector~
+        +delete(vector_id: UUID, namespace: str) None
+        +namespace_map: Map~str, List~Vector~~
     }
 
     class Index {
-        +add(vectors: Iterable<Vector>) None
-        +remove(ids: Sequence<str>, namespace: str=DEFAULT) None
-        +search(query: VectorDTO, top_k: int, namespace: str=DEFAULT, filter: Filter?, metric: Metric="cosine") Iterable<SearchResult>
-        +rebuild(source: Mapping[str, List[Vector]], metric: Metric="cosine") None
-        +dimension() int?
+        +add(vectors: Iterable~Vector~) None
+        +remove(ids: Sequence~str~, namespace: str) None
+        +search(query: VectorDTO, top_k: int, namespace: str, metric: str) Iterable~SearchResult~
+        +rebuild(source: Map, metric: str) None
+        +dimension: int
     }
 
-
     class QueryProcessor {
-        +insert(vector: Vector) None
-        +upsert_many(vectors: Iterable<Vector>) None
-        +find_similar(query: VectorDTO, top_k: int, namespace: str=DEFAULT, filter: Filter?, metric: Metric="cosine") Iterable<SearchResult>
-        +delete(vector_id: UUID, namespace: str=DEFAULT) None
+        +storage: StorageEngine
+        +index: Index
+        +insert(vector: VectorDTO, namespace: str) None
+        +upsert_many(vectors: Iterable~VectorDTO~, namespace: str) None
+        +find_similar(query: VectorDTO, top_k: int, namespace: str, metric: str) Iterable~SearchResult~
+        +delete(ids: Sequence~UUID~, namespace: str) Sequence~UUID~
+    }
+
+    class ReplicationManager {
+        +replica_count: int
+        +primary_replica: str
+        +add_replica(replica_id: str, replica_url: str) bool
+        +remove_replica(replica_id: str) bool
+        +replicate_write(vector: Vector, namespace: str) Dict
+        +replicate_delete(vector_id: UUID, namespace: str) Dict
+        +replicate_batch_write(vectors: Sequence, namespace: str) Dict
+        +check_replica_health(replica_id: str) bool
+        +check_all_replicas_health() Dict
+        +sync_replica(replica_id: str, namespace: str) bool
+        +list_replicas() List~str~
+    }
+
+    class QueryProcessorWithReplication {
+        +replication_manager: ReplicationManager
+        +insert(vector: VectorDTO, namespace: str) None
+        +upsert_many(vectors: Iterable~VectorDTO~, namespace: str) None
+        +delete(ids: Sequence~UUID~, namespace: str) Sequence~UUID~
     }
 
     class RestAPI {
         +insert_vector(vector: VectorDTO) None
-        +search_vectors(query: Embedding, top_k: int, namespace: str=DEFAULT, filter: Filter?, metric: Metric="cosine") Iterable<SearchResult>
-        +delete_vector(vector_id: UUID, namespace: str=DEFAULT) None
+        +search_vectors(query: VectorDTO, top_k: int, namespace: str, metric: str) Iterable~SearchResult~
+        +delete_vector(vector_id: UUID, namespace: str) None
         +health() Mapping
+        +replication_info() Dict
+        +add_replica(replica_id: str, replica_url: str) None
+        +remove_replica(replica_id: str) None
     }
 
-
-    class ReplicationManager {
-        <<interface>>
-        +replicate_write(vector: Vector) None
-        +replicate_delete(vector_id: UUID, namespace: str=DEFAULT) None
-        +reconcile(namespace: str=DEFAULT) None
-        +members() Sequence<str>
-    }
-
-    class ShardingManager {
-        <<interface>>
-        +shard_for_vector(vector: Vector) str
-        +shard_for_id(vector_id: UUID, namespace: str=DEFAULT) str
-        +all_shards() Sequence<str>
-    }	
-
-    %% Relationships
-    QueryProcessor --> Index : uses
-    QueryProcessor --> StorageEngine : uses
-    %%  QueryProcessor -- ReplicationManager : syncs with
-    %%  QueryProcessor -- ShardingManager : distributes via
-    RestAPI --> QueryProcessor : forwards requests
-    RestAPI -- VectorDTO : uses
-    Index --> Vector : indexes
-    StorageEngine --> Vector : stores
-    QueryProcessor --> SearchResult : returns
-    Index --> SearchResult : produces
+    %% Основные связи
+    QueryProcessor --> Index : использует
+    QueryProcessor --> StorageEngine : использует
+    Index --> Vector : индексирует
+    StorageEngine --> Vector : хранит
+    QueryProcessor --> SearchResult : возвращает
+    Index --> SearchResult : создаёт
+    
+    %% Связи репликации
+    QueryProcessorWithReplication --> StorageEngine : использует
+    QueryProcessorWithReplication --> Index : использует
+    QueryProcessorWithReplication --> ReplicationManager : реплицирует через
+    ReplicationManager --> StorageEngine : синхронизирует реплики
+    
+    %% REST API
+    RestAPI --> QueryProcessorWithReplication : использует
+    RestAPI -- VectorDTO : использует
     
 ```
 
-## Core Components
+MLVectorDB — это векторная база данных на Python, предназначенная для эффективного хранения, индексации и поиска многомерных векторов. Система предоставляет чистую архитектуру интерфейсов на основе Python Protocols, что делает её расширяемой и позволяет легко реализовывать различные движки хранения, алгоритмы индексации и процессоры запросов.
 
-### 1. Vector (Protocol)
+## Возможности
 
-Represents a high-dimensional vector with metadata.
+- **Архитектура на протоколах**: Чистые интерфейсы на Python Protocols для максимальной гибкости
+- **Операции с векторами**: Расчёт расстояний, поиск похожих, нормализация векторов
+- **Модульный дизайн**: Отдельные компоненты для хранения, индексации и обработки запросов
+- **REST API**: Полноценный HTTP API для работы с QueryProcessor через FastAPI
+- **Множество типов запросов**: KNN, поиск по радиусу, поиск похожих, фильтрация по метаданным, гибридные запросы
+- **Расширяемость**: Легко добавлять собственные движки хранения, типы индексов и процессоры запросов
+- **Типобезопасность**: Полная типизация и проверка соответствия протоколам
+- **Production Ready**: Логирование, обработка ошибок и документация API
+- **Поддержка репликации**: Встроенная репликация для высокой доступности и отказоустойчивости
 
-**Key Methods:**
-- `distance(other, metric)` - Calculate distance to another vector
-- `similarity(other, metric)` - Calculate similarity to another vector  
-- `normalize()` - Return normalized vector
-- `to_dict() / from_dict()` - Serialization support
-
-**Attributes:**
-- `id: str` - Unique identifier
-- `data: np.ndarray` - Vector data
-- `metadata: dict` - Associated metadata
-- `dimension: int` - Vector dimensionality
-
-**UML Representation:**
-```
-┌─────────────────────────────────────┐
-│              Vector                 │
-│               <<Protocol>>          │
-├─────────────────────────────────────┤
-│ + id: str                          │
-│ + data: np.ndarray                 │
-│ + metadata: Optional[dict]         │
-│ + dimension: int                   │
-├─────────────────────────────────────┤
-│ + distance(other, metric): float   │
-│ + similarity(other, metric): float │
-│ + normalize(): Vector              │
-│ + to_dict(): dict                  │
-│ + from_dict(data): Vector          │
-└─────────────────────────────────────┘
-```
-
-### 2. Index (Protocol)
-
-Manages efficient indexing and searching of vectors.
-
-**Key Methods:**
-- `add_vector(vector)` - Add vector to index
-- `search_knn(query, k)` - K-nearest neighbors search
-- `range_search(query, radius)` - Range-based search
-- `build_index()` - Build/rebuild index structure
-
-**Attributes:**
-- `name: str` - Index identifier
-- `dimension: int` - Vector dimension
-- `size: int` - Number of indexed vectors
-- `index_type: str` - Algorithm type
-
-**UML Representation:**
-```
-┌─────────────────────────────────────┐
-│               Index                 │
-│               <<Protocol>>          │
-├─────────────────────────────────────┤
-│ + name: str                        │
-│ + dimension: int                   │
-│ + size: int                        │
-│ + index_type: str                  │
-├─────────────────────────────────────┤
-│ + add_vector(vector): bool         │
-│ + add_vectors(vectors): List[bool] │
-│ + search_knn(query, k): List[...]  │
-│ + range_search(query, r): List[...]│
-│ + build_index(): bool              │
-│ + save_index(path): bool           │
-│ + load_index(path): bool           │
-└─────────────────────────────────────┘
-```
-
-### 3. StorageEngine (Protocol)
-
-Handles persistent storage and retrieval of vectors.
-
-**Key Methods:**
-- `store_vector(vector)` - Persist vector
-- `retrieve_vector(id)` - Load vector by ID
-- `query_by_metadata(filter)` - Filter by metadata
-- `iterate_vectors()` - Batch iteration
-
-**Attributes:**
-- `storage_type: str` - Storage backend type
-- `total_vectors: int` - Number of stored vectors
-- `storage_size: int` - Storage size in bytes
-
-**UML Representation:**
-```
-┌─────────────────────────────────────┐
-│           StorageEngine             │
-│               <<Protocol>>          │
-├─────────────────────────────────────┤
-│ + storage_type: str                │
-│ + total_vectors: int               │
-│ + storage_size: int                │
-├─────────────────────────────────────┤
-│ + store_vector(vector): bool       │
-│ + retrieve_vector(id): Vector      │
-│ + update_vector(vector): bool      │
-│ + delete_vector(id): bool          │
-│ + query_by_metadata(filter): List │
-│ + iterate_vectors(): Iterator      │
-│ + create_backup(path): bool        │
-│ + restore_from_backup(path): bool  │
-└─────────────────────────────────────┘
-```
-
-### 4. QueryProcessor (Protocol)
-
-Handles query parsing, optimization, and execution.
-
-**Key Methods:**
-- `execute_knn_query()` - Execute k-NN search
-- `execute_range_query()` - Execute range search
-- `execute_hybrid_query()` - Combined vector/metadata search
-- `parse_query()` - Parse query specification
-
-**Attributes:**
-- `supported_query_types: List[QueryType]` - Supported query types
-
-**Query Types:**
-- `KNN` - K-nearest neighbors
-- `RANGE` - Range search
-- `SIMILARITY` - Similarity search  
-- `METADATA` - Metadata filtering
-- `HYBRID` - Combined queries
-
-**UML Representation:**
-```
-┌─────────────────────────────────────┐
-│           QueryProcessor            │
-│               <<Protocol>>          │
-├─────────────────────────────────────┤
-│ + supported_query_types: List      │
-├─────────────────────────────────────┤
-│ + parse_query(query): dict         │
-│ + optimize_query(parsed): dict     │
-│ + execute_knn_query(...): List     │
-│ + execute_range_query(...): List   │
-│ + execute_similarity_query(): List │
-│ + execute_metadata_query(): List   │
-│ + execute_hybrid_query(...): List  │
-│ + execute_query(query): dict       │
-│ + explain_query(query): dict       │
-└─────────────────────────────────────┘
-```
-
-### 5. REST API
-
-FastAPI-based REST interface providing HTTP access to QueryProcessor functionality.
-
-**Key Endpoints:**
-- `GET /health` - Health check and status
-- `POST /query/knn` - K-nearest neighbors search
-- `POST /query/range` - Range search
-- `POST /query/similarity` - Similarity search
-- `POST /query/metadata` - Metadata filtering
-- `POST /query/hybrid` - Hybrid queries
-- `POST /query/explain` - Query execution plans
-- `GET /statistics` - Query processor statistics
-
-**Features:**
-- OpenAPI/Swagger documentation at `/docs`
-- Pydantic request/response validation
-- Comprehensive error handling
-- CORS support for web applications
-- Query statistics tracking
-- Result caching capabilities
-
-## System Relationships
-
-```
-     ┌─────────────────┐      ┌─────────────────┐
-     │   REST API      │◄─────┤   API Client    │
-     │   (FastAPI)     │      │  (HTTP Requests)│
-     └─────────┬───────┘      └─────────────────┘
-               │
-               │ uses
-               ▼
-     ┌─────────────────┐
-     │ QueryProcessor  │ ──── Coordinates queries
-     └─────────┬───────┘
-               │
-               │ uses
-               ▼
-     ┌─────────────────┐      ┌─────────────────┐
-     │      Index      │◄────►│ StorageEngine   │
-     └─────────┬───────┘      └─────────┬───────┘
-               │                        │
-               │ indexes                 │ stores
-               ▼                        ▼
-     ┌─────────────────┐                │
-     │     Vector      │◄───────────────┘
-     └─────────────────┘
-```
-
-## Development
-
-### Running Tests
+## Установка
 
 ```bash
-pytest tests/ -v
+pip install -e .
 ```
 
-### Code Quality
+## Быстрый старт
 
-```bash
-# Type checking
-mypy src/
-
-# Code formatting
-black src/ tests/
-isort src/ tests/
-
-# Linting
-flake8 src/ tests/
-```
-
-### Project Structure
-
-```
-mlvectordb/
-├── src/mlvectordb/
-│   ├── interfaces/          # Protocol definitions
-│   │   ├── vector.py
-│   │   ├── index.py
-│   │   ├── storage_engine.py
-│   │   └── query_processor.py
-│   ├── implementations/     # Concrete implementations
-│   │   ├── simple_vector.py
-│   │   └── basic_query_processor.py
-│   └── api/                # REST API
-│       ├── main.py         # FastAPI application
-│       ├── models.py       # Pydantic models
-│       └── server.py       # Server CLI
-├── examples/               # Usage examples
-│   └── api_client.py      # API client example
-├── tests/                 # Test suite
-├── pyproject.toml        # Project configuration
-└── README.md            # This file
-```
-
-## API Examples
-
-### Python Client
+### Работа с классами векторов напрямую
 
 ```python
-from examples.api_client import MLVectorDBClient
+import numpy as np
+from mlvectordb.implementations.simple_vector import SimpleVector
 
-client = MLVectorDBClient("http://localhost:8000")
+# Создание векторов
+vector1 = SimpleVector("doc1", np.array([1.0, 2.0, 3.0]), {"category": "text"})
+vector2 = SimpleVector("doc2", np.array([2.0, 3.0, 4.0]), {"category": "text"})
 
-# Health check
-health = client.health_check()
-print(f"Status: {health['status']}")
+# Расчёт расстояния и сходства
+distance = vector1.distance(vector2, metric="euclidean")
+similarity = vector1.similarity(vector2, metric="cosine")
 
-# KNN search
-results = client.knn_query(
-    vector=[1.0, 2.0, 3.0],
-    k=5
-)
-print(f"Found {results['total_results']} results")
-
-# Query statistics  
-stats = client.get_statistics()
-print(f"Total queries: {stats['total_queries']}")
+print(f"Расстояние: {distance}")
+print(f"Сходство: {similarity}")
 ```
 
-### cURL Examples
+### Использование REST API
+
+Запуск API сервера:
 
 ```bash
-# Start the server
 python -m mlvectordb.api.server --port 8000
+```
 
-# Health check
+HTTP запросы:
+
+```bash
+# Проверка здоровья
 curl http://localhost:8000/health
 
-# Get supported query types
-curl http://localhost:8000/query-types
-
-# KNN Query
+# KNN запрос
 curl -X POST http://localhost:8000/query/knn \
   -H "Content-Type: application/json" \
   -d '{
@@ -459,7 +162,375 @@ curl -X POST http://localhost:8000/query/knn \
     "k": 5
   }'
 
-# Similarity Query
+# Запрос по радиусу
+curl -X POST http://localhost:8000/query/range \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "range", 
+    "vector": [0.5, 1.5, 2.5],
+    "radius": 2.0
+  }'
+```
+
+### Документация API
+
+После запуска сервера доступны:
+- Интерактивная документация: `http://localhost:8000/docs`
+- Альтернативная документация: `http://localhost:8000/redoc`
+
+## Основные компоненты
+
+### 1. Vector (Протокол)
+
+Представляет многомерный вектор с метаданными.
+
+**Основные методы:**
+- `distance(other, metric)` - Расчёт расстояния до другого вектора
+- `similarity(other, metric)` - Расчёт сходства с другим вектором
+- `normalize()` - Возврат нормализованного вектора
+- `to_dict() / from_dict()` - Сериализация
+
+**Атрибуты:**
+- `id: str` - Уникальный идентификатор
+- `data: np.ndarray` - Данные вектора
+- `metadata: dict` - Связанные метаданные
+- `dimension: int` - Размерность вектора
+
+### 2. Index (Протокол)
+
+Управляет эффективной индексацией и поиском векторов.
+
+**Основные методы:**
+- `add_vector(vector)` - Добавление вектора в индекс
+- `search_knn(query, k)` - Поиск K ближайших соседей
+- `range_search(query, radius)` - Поиск по радиусу
+- `build_index()` - Построение/перестроение структуры индекса
+
+**Атрибуты:**
+- `name: str` - Идентификатор индекса
+- `dimension: int` - Размерность вектора
+- `size: int` - Количество проиндексированных векторов
+- `index_type: str` - Тип алгоритма
+
+### 3. StorageEngine (Протокол)
+
+Обеспечивает персистентное хранение и извлечение векторов.
+
+**Основные методы:**
+- `store_vector(vector)` - Сохранение вектора
+- `retrieve_vector(id)` - Загрузка вектора по ID
+- `query_by_metadata(filter)` - Фильтрация по метаданным
+- `iterate_vectors()` - Итерация по пакетам
+
+**Атрибуты:**
+- `storage_type: str` - Тип бэкенда хранения
+- `total_vectors: int` - Количество сохранённых векторов
+- `storage_size: int` - Размер хранилища в байтах
+
+### 4. QueryProcessor (Протокол)
+
+Обрабатывает парсинг, оптимизацию и выполнение запросов.
+
+**Основные методы:**
+- `execute_knn_query()` - Выполнение k-NN поиска
+- `execute_range_query()` - Выполнение поиска по радиусу
+- `execute_hybrid_query()` - Комбинированный поиск вектор/метаданные
+- `parse_query()` - Парсинг спецификации запроса
+
+**Типы запросов:**
+- `KNN` - K ближайших соседей
+- `RANGE` - Поиск по радиусу
+- `SIMILARITY` - Поиск похожих
+- `METADATA` - Фильтрация по метаданным
+- `HYBRID` - Комбинированные запросы
+
+### 5. REST API
+
+REST интерфейс на FastAPI для HTTP доступа к функционалу QueryProcessor.
+
+**Основные эндпоинты:**
+- `GET /health` - Проверка здоровья и статус
+- `POST /query/knn` - Поиск K ближайших соседей
+- `POST /query/range` - Поиск по радиусу
+- `POST /query/similarity` - Поиск похожих
+- `POST /query/metadata` - Фильтрация по метаданным
+- `POST /query/hybrid` - Гибридные запросы
+- `POST /query/explain` - Планы выполнения запросов
+- `GET /statistics` - Статистика процессора запросов
+
+**Возможности:**
+- OpenAPI/Swagger документация на `/docs`
+- Pydantic валидация запросов/ответов
+- Обработка ошибок
+- CORS поддержка для веб-приложений
+- Отслеживание статистики запросов
+- Возможности кеширования результатов
+- Эндпоинты управления репликацией
+
+### 6. ReplicationManager (Протокол)
+
+Управляет репликацией данных между несколькими репликами хранилища для высокой доступности и отказоустойчивости.
+
+**Основные методы:**
+- `add_replica(replica_id, replica_url)` - Добавление новой реплики
+- `remove_replica(replica_id)` - Удаление реплики
+- `replicate_write(vector, namespace)` - Репликация записи вектора на все реплики
+- `replicate_delete(vector_id, namespace)` - Репликация удаления вектора
+- `replicate_batch_write(vectors, namespace)` - Пакетная репликация
+- `check_replica_health(replica_id)` - Проверка здоровья одной реплики
+- `check_all_replicas_health()` - Проверка здоровья всех реплик
+- `sync_replica(replica_id)` - Полная синхронизация реплики
+
+**Атрибуты:**
+- `replica_count: int` - Количество активных здоровых реплик
+- `primary_replica: str` - Идентификатор первичной реплики
+
+**Возможности:**
+- Динамическое добавление/удаление реплик без перезапуска
+- Автоматическая проверка здоровья реплик
+- Асинхронная репликация (неблокирующие записи)
+- Обработка ошибок с грациозной деградацией
+- Поддержка пакетных операций
+
+## Репликация
+
+MLVectorDB поддерживает репликацию данных для высокой доступности и отказоустойчивости. При включённой репликации все операции записи автоматически распространяются на настроенные реплики.
+
+### Архитектура репликации
+
+```
+┌─────────────────────┐
+│   Primary Node      │
+│  ┌───────────────┐  │
+│  │ StorageEngine │  │
+│  │   (Master)    │  │
+│  └───────────────┘  │
+│         │           │
+│  ┌──────▼────────┐  │
+│  │ Replication   │  │
+│  │   Manager     │  │
+│  └──────┬────────┘  │
+└─────────┼───────────┘
+          │ HTTP API
+          │
+  ┌───────┴───────┐
+  │               │
+  ▼               ▼
+┌─────────┐   ┌─────────┐
+│Replica 1│   │Replica 2│
+│ :8001   │   │ :8002   │
+└─────────┘   └─────────┘
+```
+
+### Включение репликации
+
+#### Сервер с репликацией
+
+```bash
+python -m mlvectordb.api.server --enable-replication --port 8000
+```
+
+#### Программный API
+
+```python
+from mlvectordb.implementations.storage_engine_in_memory import StorageEngineInMemory
+from mlvectordb.implementations.index import Index
+from mlvectordb.implementations.replication_manager import ReplicationManagerImpl
+from mlvectordb.implementations.query_processor_with_replication import QueryProcessorWithReplication
+
+# Создание первичного хранилища и менеджера репликации
+primary_storage = StorageEngineInMemory()
+replication_manager = ReplicationManagerImpl(
+    primary_storage=primary_storage,
+    primary_replica_id="primary",
+    health_check_interval=5.0  # Проверка здоровья каждые 5 секунд
+)
+
+# Добавление реплик
+replication_manager.add_replica("replica_1", "http://localhost:8001")
+replication_manager.add_replica("replica_2", "http://localhost:8002")
+
+# Создание QueryProcessor с поддержкой репликации
+qproc = QueryProcessorWithReplication(
+    storage_engine=primary_storage,
+    index=Index(),
+    replication_manager=replication_manager
+)
+
+# Вставки векторов автоматически реплицируются
+from mlvectordb.interfaces.vector import VectorDTO
+vector = VectorDTO(values=[1.0, 2.0, 3.0], metadata={"category": "test"})
+qproc.insert(vector, namespace="default")
+```
+
+### REST API для репликации
+
+```bash
+# Получить информацию о репликации
+curl http://localhost:8000/replication/info
+
+# Добавить реплику
+curl -X POST "http://localhost:8000/replication/replicas?replica_id=replica_1&replica_url=http://localhost:8001"
+
+# Удалить реплику
+curl -X DELETE http://localhost:8000/replication/replicas/replica_1
+
+# Проверить здоровье реплики
+curl http://localhost:8000/replication/replicas/replica_1/health
+
+# Проверить здоровье всех реплик
+curl http://localhost:8000/replication/replicas/health
+```
+
+### Возможности репликации
+
+| Возможность | Описание |
+|-------------|----------|
+| **Динамическое управление** | Добавление/удаление реплик без перезапуска сервиса |
+| **Мониторинг здоровья** | Автоматическая фоновая проверка здоровья |
+| **Асинхронная репликация** | Неблокирующие операции записи |
+| **Устойчивость к ошибкам** | Записи успешны даже если реплики недоступны |
+| **Поддержка пакетов** | Эффективная массовая репликация |
+| **Полная синхронизация** | Полная синхронизация реплики по запросу |
+
+## Связи компонентов системы
+
+```
+                                ┌─────────────────┐
+                                │   API Клиент    │
+                                │  (HTTP Запросы) │
+                                └────────┬────────┘
+                                         │
+                                         ▼
+                          ┌──────────────────────────┐
+                          │        REST API          │
+                          │        (FastAPI)         │
+                          └──────────────┬───────────┘
+                                         │ использует
+                                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│               QueryProcessorWithReplication                      │
+│                                                                  │
+│   ┌─────────────────┐      ┌─────────────────┐                  │
+│   │      Index      │◄────►│ StorageEngine   │                  │
+│   │                 │      │   (Primary)     │                  │
+│   └─────────────────┘      └─────────────────┘                  │
+│                              │                                   │
+│                              │ реплицирует через                 │
+│                              ▼                                   │
+│                ┌─────────────────────────┐                       │
+│                │   ReplicationManager    │                       │
+│                └────────────┬────────────┘                       │
+└─────────────────────────────┼───────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              │               │               │
+              ▼               ▼               ▼
+     ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+     │  Replica 1   │ │  Replica 2   │ │  Replica N   │
+     │  (HTTP API)  │ │  (HTTP API)  │ │  (HTTP API)  │
+     └──────────────┘ └──────────────┘ └──────────────┘
+```
+
+## Разработка
+
+### Запуск тестов
+
+```bash
+pytest tests/ -v
+```
+
+### Качество кода
+
+```bash
+# Проверка типов
+mypy src/
+
+# Форматирование кода
+black src/ tests/
+isort src/ tests/
+
+# Линтинг
+flake8 src/ tests/
+```
+
+### Структура проекта
+
+```
+mlvectordb/
+├── src/mlvectordb/
+│   ├── interfaces/              # Определения протоколов
+│   │   ├── vector.py
+│   │   ├── index.py
+│   │   ├── storage_engine.py
+│   │   ├── query_processor.py
+│   │   └── replication.py       # Протокол ReplicationManager
+│   ├── implementations/         # Конкретные реализации
+│   │   ├── vector.py
+│   │   ├── index.py
+│   │   ├── storage_engine_in_memory.py
+│   │   ├── query_processor.py
+│   │   ├── query_processor_with_replication.py  # Расширенный QueryProcessor
+│   │   └── replication_manager.py               # Реализация ReplicationManager
+│   └── api/                    # REST API
+│       ├── main.py             # FastAPI приложение
+│       ├── models.py           # Pydantic модели
+│       └── server.py           # CLI сервера
+├── examples/                   # Примеры использования
+│   └── api_client.py          # Пример API клиента
+├── tests/                     # Тесты
+├── pyproject.toml            # Конфигурация проекта
+├── REPLICATION_SHARDING.md   # Подробная документация по репликации/шардированию
+└── README.md                # Этот файл
+```
+
+## Примеры API
+
+### Python клиент
+
+```python
+from examples.api_client import MLVectorDBClient
+
+client = MLVectorDBClient("http://localhost:8000")
+
+# Проверка здоровья
+health = client.health_check()
+print(f"Статус: {health['status']}")
+
+# KNN поиск
+results = client.knn_query(
+    vector=[1.0, 2.0, 3.0],
+    k=5
+)
+print(f"Найдено {results['total_results']} результатов")
+
+# Статистика запросов
+stats = client.get_statistics()
+print(f"Всего запросов: {stats['total_queries']}")
+```
+
+### Примеры cURL
+
+```bash
+# Запуск сервера
+python -m mlvectordb.api.server --port 8000
+
+# Проверка здоровья
+curl http://localhost:8000/health
+
+# Получить поддерживаемые типы запросов
+curl http://localhost:8000/query-types
+
+# KNN запрос
+curl -X POST http://localhost:8000/query/knn \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "knn",
+    "vector": [1.0, 2.0, 3.0],
+    "k": 5
+  }'
+
+# Запрос по сходству
 curl -X POST http://localhost:8000/query/similarity \
   -H "Content-Type: application/json" \
   -d '{
@@ -469,7 +540,7 @@ curl -X POST http://localhost:8000/query/similarity \
     "metric": "cosine"
   }'
 
-# Metadata Query
+# Запрос по метаданным
 curl -X POST http://localhost:8000/query/metadata \
   -H "Content-Type: application/json" \
   -d '{
@@ -477,7 +548,7 @@ curl -X POST http://localhost:8000/query/metadata \
     "filter": {"category": "documents", "active": true}
   }'
 
-# Query Explanation
+# Объяснение запроса
 curl -X POST http://localhost:8000/query/explain \
   -H "Content-Type: application/json" \
   -d '{
@@ -486,17 +557,22 @@ curl -X POST http://localhost:8000/query/explain \
     "k": 10
   }'
 
-# Get Statistics
+# Получить статистику
 curl http://localhost:8000/statistics
 ```
 
-## Contributing
+## Вклад в проект
 
-1. Implement new storage engines by following the `StorageEngine` protocol
-2. Create new index types by implementing the `Index` protocol  
-3. Add custom query processors using the `QueryProcessor` protocol
-4. Extend vector functionality through the `Vector` protocol
+1. Реализуйте новые движки хранения по протоколу `StorageEngine`
+2. Создавайте новые типы индексов по протоколу `Index`
+3. Добавляйте кастомные процессоры запросов по протоколу `QueryProcessor`
+4. Расширяйте функционал векторов через протокол `Vector`
+5. Создавайте кастомные стратегии репликации по протоколу `ReplicationManager`
 
-## License
+## Дополнительная документация
 
-This project is developed as part of the Big Data Infrastructure course.
+- [Документация по репликации и шардированию](REPLICATION_SHARDING.md) - Подробная документация по настройке репликации
+
+## Лицензия
+
+Этот проект разработан в рамках курса "Инфраструктура больших данных".
