@@ -2,7 +2,7 @@ import logging
 import sys
 import time
 from uuid import UUID
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Optional
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -309,6 +309,286 @@ class RestAPI:
             self.logger.info(f"Уровень логирования изменен на: {level.upper()}")
 
             return {"status": "success", "message": f"Log level set to {level.upper()}"}
+
+        # Endpoints для управления репликацией
+        @self.app.get("/replication/info")
+        async def get_replication_info():
+            """Получить информацию о репликации"""
+            self.logger.info("Запрос информации о репликации")
+            try:
+                if hasattr(self.query_processor, '_replication_manager') and self.query_processor._replication_manager:
+                    info = self.query_processor._replication_manager.get_replica_info()
+                    return info
+                else:
+                    return {"message": "Репликация не настроена"}
+            except Exception as e:
+                self.logger.error(f"Ошибка получения информации о репликации: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to get replication info: {str(e)}"
+                )
+
+        @self.app.post("/replication/replicas")
+        async def add_replica(replica_id: str = Query(..., description="ID реплики"), 
+                             replica_url: str = Query(..., description="URL реплики")):
+            """Добавить новую реплику"""
+            self.logger.info(f"Запрос на добавление реплики: {replica_id} по адресу {replica_url}")
+            try:
+                if hasattr(self.query_processor, '_replication_manager') and self.query_processor._replication_manager:
+                    success = self.query_processor._replication_manager.add_replica(replica_id, replica_url)
+                    if success:
+                        return {"status": "success", "message": f"Реплика {replica_id} добавлена"}
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Не удалось добавить реплику {replica_id}"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Репликация не настроена"
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Ошибка добавления реплики: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to add replica: {str(e)}"
+                )
+
+        @self.app.delete("/replication/replicas/{replica_id}")
+        async def remove_replica(replica_id: str):
+            """Удалить реплику"""
+            self.logger.info(f"Запрос на удаление реплики: {replica_id}")
+            try:
+                if hasattr(self.query_processor, '_replication_manager') and self.query_processor._replication_manager:
+                    success = self.query_processor._replication_manager.remove_replica(replica_id)
+                    if success:
+                        return {"status": "success", "message": f"Реплика {replica_id} удалена"}
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Реплика {replica_id} не найдена"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Репликация не настроена"
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Ошибка удаления реплики: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to remove replica: {str(e)}"
+                )
+
+        @self.app.get("/replication/replicas/{replica_id}/health")
+        async def check_replica_health(replica_id: str):
+            """Проверить здоровье реплики"""
+            self.logger.info(f"Запрос проверки здоровья реплики: {replica_id}")
+            try:
+                if hasattr(self.query_processor, '_replication_manager') and self.query_processor._replication_manager:
+                    is_healthy = self.query_processor._replication_manager.check_replica_health(replica_id)
+                    return {"replica_id": replica_id, "is_healthy": is_healthy}
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Репликация не настроена"
+                    )
+            except Exception as e:
+                self.logger.error(f"Ошибка проверки здоровья реплики: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to check replica health: {str(e)}"
+                )
+
+        @self.app.get("/replication/replicas/health")
+        async def check_all_replicas_health():
+            """Проверить здоровье всех реплик"""
+            self.logger.info("Запрос проверки здоровья всех реплик")
+            try:
+                if hasattr(self.query_processor, '_replication_manager') and self.query_processor._replication_manager:
+                    health_status = self.query_processor._replication_manager.check_all_replicas_health()
+                    return {"replicas_health": health_status}
+                else:
+                    return {"message": "Репликация не настроена"}
+            except Exception as e:
+                self.logger.error(f"Ошибка проверки здоровья реплик: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to check replicas health: {str(e)}"
+                )
+
+        @self.app.post("/replication/replicas/{replica_id}/sync")
+        async def sync_replica(replica_id: str, namespace: Optional[str] = Query(None, description="Namespace для синхронизации (опционально)")):
+            """Синхронизировать реплику с первичной"""
+            self.logger.info(f"Запрос синхронизации реплики: {replica_id}")
+            try:
+                if hasattr(self.query_processor, '_replication_manager') and self.query_processor._replication_manager:
+                    success = self.query_processor._replication_manager.sync_replica(replica_id, namespace)
+                    if success:
+                        return {"status": "success", "message": f"Реплика {replica_id} синхронизирована"}
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f"Не удалось синхронизировать реплику {replica_id}"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Репликация не настроена"
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Ошибка синхронизации реплики: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to sync replica: {str(e)}"
+                )
+
+        # Endpoints для управления шардированием
+        @self.app.get("/sharding/info")
+        async def get_sharding_info():
+            """Получить информацию о шардировании"""
+            self.logger.info("Запрос информации о шардировании")
+            try:
+                if hasattr(self.query_processor, '_sharding_manager') and self.query_processor._sharding_manager:
+                    info = self.query_processor._sharding_manager.get_shard_info()
+                    return info
+                else:
+                    return {"message": "Шардирование не настроено"}
+            except Exception as e:
+                self.logger.error(f"Ошибка получения информации о шардировании: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to get sharding info: {str(e)}"
+                )
+
+        @self.app.post("/sharding/shards")
+        async def add_shard(shard_id: str = Query(..., description="ID шарда"),
+                           shard_url: str = Query(None, description="URL шарда (опционально)")):
+            """Добавить новый шард"""
+            self.logger.info(f"Запрос на добавление шарда: {shard_id}")
+            try:
+                if hasattr(self.query_processor, '_sharding_manager') and self.query_processor._sharding_manager:
+                    success = self.query_processor._sharding_manager.add_shard(shard_id, shard_url)
+                    if success:
+                        return {"status": "success", "message": f"Шард {shard_id} добавлен"}
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Не удалось добавить шард {shard_id}"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Шардирование не настроено"
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Ошибка добавления шарда: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to add shard: {str(e)}"
+                )
+
+        @self.app.delete("/sharding/shards/{shard_id}")
+        async def remove_shard(shard_id: str):
+            """Удалить шард"""
+            self.logger.info(f"Запрос на удаление шарда: {shard_id}")
+            try:
+                if hasattr(self.query_processor, '_sharding_manager') and self.query_processor._sharding_manager:
+                    success = self.query_processor._sharding_manager.remove_shard(shard_id)
+                    if success:
+                        return {"status": "success", "message": f"Шард {shard_id} удален"}
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Шард {shard_id} не найден или это последний шард"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Шардирование не настроено"
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Ошибка удаления шарда: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to remove shard: {str(e)}"
+                )
+
+        @self.app.get("/sharding/shards/{shard_id}/health")
+        async def check_shard_health(shard_id: str):
+            """Проверить здоровье шарда"""
+            self.logger.info(f"Запрос проверки здоровья шарда: {shard_id}")
+            try:
+                if hasattr(self.query_processor, '_sharding_manager') and self.query_processor._sharding_manager:
+                    is_healthy = self.query_processor._sharding_manager.check_shard_health(shard_id)
+                    return {"shard_id": shard_id, "is_healthy": is_healthy}
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Шардирование не настроено"
+                    )
+            except Exception as e:
+                self.logger.error(f"Ошибка проверки здоровья шарда: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to check shard health: {str(e)}"
+                )
+
+        @self.app.get("/sharding/shards/health")
+        async def check_all_shards_health():
+            """Проверить здоровье всех шардов"""
+            self.logger.info("Запрос проверки здоровья всех шардов")
+            try:
+                if hasattr(self.query_processor, '_sharding_manager') and self.query_processor._sharding_manager:
+                    health_status = self.query_processor._sharding_manager.check_all_shards_health()
+                    return {"shards_health": health_status}
+                else:
+                    return {"message": "Шардирование не настроено"}
+            except Exception as e:
+                self.logger.error(f"Ошибка проверки здоровья шардов: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to check shards health: {str(e)}"
+                )
+
+        @self.app.post("/sharding/shards/{from_shard}/redistribute/{to_shard}")
+        async def redistribute_shard_data(from_shard: str, to_shard: str):
+            """Перераспределить данные между шардами"""
+            self.logger.info(f"Запрос перераспределения данных: {from_shard} -> {to_shard}")
+            try:
+                if hasattr(self.query_processor, '_sharding_manager') and self.query_processor._sharding_manager:
+                    success = self.query_processor._sharding_manager.redistribute_data(from_shard, to_shard)
+                    if success:
+                        return {"status": "success", "message": f"Данные перераспределены из {from_shard} в {to_shard}"}
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f"Не удалось перераспределить данные из {from_shard} в {to_shard}"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Шардирование не настроено"
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Ошибка перераспределения данных: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to redistribute data: {str(e)}"
+                )
 
     def get_app(self) -> FastAPI:
         """Получение FastAPI приложения"""
