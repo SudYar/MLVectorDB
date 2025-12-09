@@ -7,9 +7,13 @@ Usage:
     or
     python scripts/run_api.py
 """
+<<<<<<< HEAD
 import requests
+=======
+>>>>>>> 903dffe49c52e0890ec57cc6bc6e929586d942cb
 import uvicorn
 import argparse
+import requests
 
 
 def main():
@@ -44,7 +48,11 @@ def main():
     )
     parser.add_argument(
         "--primary-url",
+<<<<<<< HEAD
         default="http://localhost:8000",
+=======
+        default="http://localhost:8000/replication/replicas",
+>>>>>>> 903dffe49c52e0890ec57cc6bc6e929586d942cb
         help="Send primary url"
     )
     parser.add_argument(
@@ -111,7 +119,7 @@ def main():
                 health_check_interval=5.0
             )
             print(f"Sharding manager initialized with {len(shard_storages)} local shards")
-        
+
         qproc = QueryProcessorWithReplication(
             storage_engine=primary_storage,
             index=index,
