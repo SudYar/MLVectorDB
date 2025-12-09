@@ -497,6 +497,43 @@ class RestAPI:
                     detail=f"Failed to add shard: {str(e)}"
                 )
 
+        @self.app.post("/sharding/shards/local")
+        async def add_local_shard(shard_id: str = Query(..., description="ID локального шарда")):
+            """Добавить новый локальный шард с новым StorageEngine"""
+            self.logger.info(f"Запрос на добавление локального шарда: {shard_id}")
+            try:
+                if hasattr(self.query_processor, '_sharding_manager') and self.query_processor._sharding_manager:
+                    # Создаем новый StorageEngineInMemory для локального шарда
+                    from src.mlvectordb.implementations.storage_engine_in_memory import StorageEngineInMemory
+                    new_storage = StorageEngineInMemory()
+                    
+                    success = self.query_processor._sharding_manager.add_local_shard(shard_id, new_storage)
+                    if success:
+                        return {
+                            "status": "success", 
+                            "message": f"Локальный шард {shard_id} добавлен",
+                            "shard_id": shard_id,
+                            "is_local": True
+                        }
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Не удалось добавить локальный шард {shard_id}"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Шардирование не настроено"
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Ошибка добавления локального шарда: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to add local shard: {str(e)}"
+                )
+
         @self.app.delete("/sharding/shards/{shard_id}")
         async def remove_shard(shard_id: str):
             """Удалить шард"""

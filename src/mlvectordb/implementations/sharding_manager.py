@@ -133,16 +133,24 @@ class ShardingManagerImpl(ShardingManager):
                 if not self._health_check_thread and self._health_check_interval > 0:
                     self._start_health_check_thread()
             else:
-                # Локальный шард всегда здоров
-                shard.is_healthy = True
-            
-            self.logger.info(
-                f"Добавлен шард {shard_id} "
-                f"({'удаленный' if shard_url else 'локальный'})"
-            )
-            return True
-    
-    def remove_shard(self, shard_id: str) -> bool:
+                # Локальный шард - проверяем, есть ли для него StorageEngine
+                if shard_id in self._shard_storages:
+                    shard.is_healthy = True
+                else:
+                    # Локальный шард без StorageEngine считается нездоровым
+                    shard.is_healthy = False
+                    self.logger.warning(
+                        f"Локальный шард {shard_id} добавлен без StorageEngine, "
+                        f"используйте add_local_shard() для добавления StorageEngine"
+                    )ard_storages:
+                    shard.is_healthy = True
+                else:
+                    # Локальный шард без StorageEngine считается нездоровым
+                    shard.is_healthy = False
+                    self.logger.warning(
+                        f"Локальный шард {shard_id} добавлен без StorageEngine, "
+                        f"используйте add_local_shard() для добавления StorageEngine"
+                    )self, shard_id: str) -> bool:
         """Удалить шард."""
         with self._lock:
             if shard_id not in self._shards:
@@ -372,14 +380,19 @@ class ShardingManagerImpl(ShardingManager):
             
             shard = self._shards[shard_id]
             
-            # Локальные шарды всегда здоровы (если они есть)
+            # Локальные шарды - проверяем наличие StorageEngine
             if shard.url is None:
-                if shard_id in self._shard_storages:
-                    shard.is_healthy = True
-                    return True
-                else:
-                    shard.is_healthy = False
-                    return False
+                has_storage = shard_id in self._shard_storages
+                # Обновляем статус только если изменился
+                if has_storage != shard.is_healthy:
+                    shard.is_healthy = has_storage
+                    if has_storage:
+                        self.logger.debug(f"Локальный шард {shard_id} теперь здоров (StorageEngine найден)")
+                    else:
+                        self.logger.warning(
+                            f"Локальный шард {shard_id} не имеет StorageEngine"
+                        )
+                return has_storage
             
             # Для удаленных шардов проверяем через HTTP
             return self._check_shard_health_internal(shard_id)
@@ -433,10 +446,21 @@ class ShardingManagerImpl(ShardingManager):
             }
             
             for shard_id, shard in self._shards.items():
+                # Обновляем vector_count из StorageEngine для локальных шардов
+                vector_count = shard.vector_count
+                if shard.url is None and shard_id in self._shard_storages:
+                    storage = self._shard_storages[shard_id]
+                    # Подсчитываем векторы во всех namespace
+                    total_vectors = 0
+                    for namespace_vectors in storage.namespace_map.values():
+                        total_vectors += len(namespace_vectors)
+                    shard.vector_count = total_vectors
+                    vector_count = total_vectors
+                
                 shard_info = {
                     "is_healthy": shard.is_healthy,
                     "is_local": shard.url is None,
-                    "vector_count": shard.vector_count
+                    "vector_count": vector_count
                 }
                 
                 if shard.url:
@@ -455,6 +479,31 @@ class ShardingManagerImpl(ShardingManager):
     def get_shard_storage(self, shard_id: str) -> Optional[StorageEngine]:
         """Получить StorageEngine для локального шарда."""
         return self._shard_storages.get(shard_id)
+    
+    def update_shard_vector_count(self, shard_id: str) -> None:
+        """Обновить количество векторов в шарде из StorageEngine."""
+        with self._lock:
+            if shard_id not in self._shards:
+                self.logger.warning(f"Шард {shard_id} не найден при обновлении vector_count")
+                return
+            
+            shard = self._shards[shard_id]
+            if shard.url is None and shard_id in self._shard_storages:
+                # Локальный шард - подсчитываем векторы из StorageEngine
+                storage = self._shard_storages[shard_id]
+                total_vectors = 0
+                for namespace_vectors in storage.namespace_map.values():
+                    total_vectors += len(namespace_vectors)
+                old_count = shard.vector_count
+                shard.vector_count = total_vectors
+                self.logger.debug(
+                    f"Обновлен vector_count для шарда {shard_id}: {old_count} -> {total_vectors}"
+                )
+            else:
+                self.logger.debug(
+                    f"Не удалось обновить vector_count для шарда {shard_id}: "
+                    f"url={shard.url}, has_storage={shard_id in self._shard_storages}"
+                )
     
     def _has_remote_shards(self) -> bool:
         """Проверить, есть ли удаленные шарды."""
@@ -551,21 +600,103 @@ class ShardingManagerImpl(ShardingManager):
             )
             return False
     
-    def read_from_remote_shard(
+    def write_batch_to_remote_shard(
         self,
         shard_id: str,
-        vector_id: UUID,
+        vectors_data: Dict[str, Any],
         namespace: str
-    ) -> Optional[VectorProtocol]:
+    ) -> bool:
         """
-        Прочитать вектор с удаленного шарда через HTTP API.
+        Записать batch векторов на удаленный шард через HTTP API.
         
         Args:
             shard_id: Идентификатор удаленного шарда
-            vector_id: ID вектора
+    def write_batch_to_remote_shard(
+        self,
+        shard_id: str,
+        vectors_data: Dict[str, Any],
+        namespace: str
+    ) -> bool:
+        """
+        Записать batch векторов на удаленный шард через HTTP API.
+        
+        Args:
+            shard_id: Идентификатор удаленного шарда
+            vectors_data: Словарь с ключом "vectors" содержащий список векторов
             namespace: Пространство имен
             
         Returns:
+            True если запись успешна
+        """
+        if self._session is None:
+            self.logger.error("HTTP сессия не инициализирована")
+            return False
+        
+        if shard_id not in self._shards:
+            self.logger.error(f"Шард {shard_id} не найден")
+            return False
+        
+        shard = self._shards[shard_id]
+        if shard.url is None:
+            self.logger.error(f"Шард {shard_id} не является удаленным")
+            return False
+        
+        try:
+            url = f"{shard.url}/vectors/batch?namespace={namespace}"
+            response = self._session.put(
+                url,
+                json=vectors_data,
+                timeout=self._request_timeout * len(vectors_data.get("vectors", []))
+            )
+            
+            if response.status_code == 200:
+                return True
+            else:
+                self.logger.error(
+                    f"Ошибка batch записи на удаленный шард {shard_id}: "
+                    f"HTTP {response.status_code}"
+                )
+                return False
+        except Exception as e:
+            self.logger.error(
+                f"Ошибка batch записи на удаленный шард {shard_id}: {e}",
+                exc_info=True
+            )
+            return False
+    
+    def add_local_shard(self, shard_id: str, storage: StorageEngine) -> bool:
+            shard_id: Уникальный идентификатор шарда
+            storage: StorageEngine для локального шарда
+            
+            # Если шард уже существует, обновляем его статус
+            if shard_id in self._shards:
+                shard = self._shards[shard_id]
+                shard.is_healthy = True  # Теперь шард здоров, так как есть StorageEngine
+                self.logger.info(f"StorageEngine добавлен для существующего шарда {shard_id}, статус обновлен")
+            else:
+                # Создаем ShardInfo для локального шарда
+                shard = ShardInfo(shard_id, url=None)
+                shard.is_healthy = True  # Локальные шарды всегда здоровы
+                self._shards[shard_id] = shard
+                self.logger.info(f"Добавлен новый локальный шард {shard_id}")
+            if shard_id in self._shards:
+                shard.is_healthy = True  # Теперь шард здоров, так как есть StorageEngine
+            # Если шард уже существует, обновляем его статус
+            if shard_id in self._shards:
+                shard = self._shards[shard_id]
+                shard.is_healthy = True  # Теперь шард здоров, так как есть StorageEngine
+                self.logger.info(f"StorageEngine добавлен для существующего шарда {shard_id}, статус обновлен")
+            else:
+                # Создаем ShardInfo для локального шарда
+                shard = ShardInfo(shard_id, url=None)
+                shard.is_healthy = True  # Локальные шарды всегда здоровы
+                self._shards[shard_id] = shard
+                self.logger.info(f"Добавлен новый локальный шард {shard_id}"), url=None)
+                shard.is_healthy = True  # Локальные шарды всегда здоровы
+                self.logger.info(f"Добавлен новый локальный шард {shard_id}")
+            
+            return True
+    
             Вектор или None если не найден
         """
         if self._session is None:
@@ -574,115 +705,163 @@ class ShardingManagerImpl(ShardingManager):
         
         if shard_id not in self._shards:
             self.logger.error(f"Шард {shard_id} не найден")
-            return None
-        
-        shard = self._shards[shard_id]
-        if shard.url is None:
-            self.logger.error(f"Шард {shard_id} не является удаленным")
-            return None
-        
-        try:
-            # Используем endpoint для получения всех векторов namespace и фильтруем
-            # В реальной реализации нужен endpoint /vectors/{vector_id}
-            url = f"{shard.url}/namespaces/vectors?namespace={namespace}"
-            response = self._session.get(
-                url,
-                timeout=self._request_timeout
-            )
-            
-            if response.status_code == 200:
-                vectors_data = response.json()
-                for vec_data in vectors_data:
-                    if UUID(vec_data["id"]) == vector_id:
-                        # Создаем вектор из данных
-                        from ..vector import Vector
-                        return Vector(
-                            values=vec_data["values"],
-                            metadata=vec_data.get("metadata", {})
-                        )
-                return None
-            else:
-                self.logger.error(
-                    f"Ошибка чтения с удаленного шарда {shard_id}: "
-                    f"HTTP {response.status_code}"
-                )
-                return None
-        except Exception as e:
-            self.logger.error(
-                f"Ошибка чтения с удаленного шарда {shard_id}: {e}",
-                exc_info=True
-            )
-            return None
-    
-    def search_on_remote_shard(
+    def write_batch_to_remote_shard(
         self,
         shard_id: str,
-        query: VectorDTO,
-        top_k: int,
-        namespace: str,
-        metric: str = "cosine"
-    ) -> List[Dict[str, Any]]:
+        vectors_data: Dict[str, Any],
+        namespace: str
+    ) -> bool:
         """
-        Выполнить поиск на удаленном шарде через HTTP API.
+        Записать batch векторов на удаленный шард через HTTP API.
         
         Args:
             shard_id: Идентификатор удаленного шарда
-            query: Вектор запроса
-            top_k: Количество результатов
+            vectors_data: Словарь с ключом "vectors" содержащий список векторов
             namespace: Пространство имен
-            metric: Метрика расстояния
             
         Returns:
-            Список результатов поиска
+            True если запись успешна
         """
         if self._session is None:
             self.logger.error("HTTP сессия не инициализирована")
-            return []
+            return False
         
         if shard_id not in self._shards:
             self.logger.error(f"Шард {shard_id} не найден")
-            return []
+            return False
         
         shard = self._shards[shard_id]
         if shard.url is None:
             self.logger.error(f"Шард {shard_id} не является удаленным")
-            return []
+            return False
         
         try:
-            search_data = {
-                "query": query.values.tolist() if hasattr(query.values, 'tolist') else list(query.values),
-                "top_k": top_k,
-                "metric": metric
-            }
-            
-            url = f"{shard.url}/search?namespace={namespace}"
-            response = self._session.post(
+            url = f"{shard.url}/vectors/batch?namespace={namespace}"
+            response = self._session.put(
                 url,
-                json=search_data,
-                timeout=self._request_timeout * top_k
+                json=vectors_data,
+                timeout=self._request_timeout * len(vectors_data.get("vectors", []))
             )
             
             if response.status_code == 200:
-                return response.json()
+                return True
             else:
                 self.logger.error(
-                    f"Ошибка поиска на удаленном шарде {shard_id}: "
+                    f"Ошибка batch записи на удаленный шард {shard_id}: "
                     f"HTTP {response.status_code}"
                 )
-                return []
+                return False
         except Exception as e:
             self.logger.error(
-                f"Ошибка поиска на удаленном шарде {shard_id}: {e}",
+                f"Ошибка batch записи на удаленный шард {shard_id}: {e}",
                 exc_info=True
             )
-            return []
+            return False
     
-    def shutdown(self):
-        """Остановить менеджер шардирования."""
-        self._stop_health_check.set()
-        if self._health_check_thread:
-            self._health_check_thread.join(timeout=2.0)
-        if self._session:
-            self._session.close()
-        self.logger.info("Менеджер шардирования остановлен")
-
+    def add_local_shard(self, shard_id: str, storage: StorageEngine) -> bool:
+        """
+        Добавить новый локальный шард с StorageEngine.
+        
+        Args:
+            shard_id: Уникальный идентификатор шарда
+            storage: StorageEngine для локального шарда
+            
+        Returns:
+            True если шард успешно добавлен
+        """
+        with self._lock:
+            if shard_id in self._shards:
+                self.logger.warning(f"Шард {shard_id} уже существует")
+                return False
+            
+            # Добавляем StorageEngine
+            self._shard_storages[shard_id] = storage
+            
+            # Создаем ShardInfo для локального шарда
+            shard = ShardInfo(shard_id, url=None)
+            shard.is_healthy = True  # Локальные шарды всегда здоровы
+            self._shards[shard_id] = shard
+            
+            self.logger.info(f"Добавлен локальный шард {shard_id}")
+            return True
+    
+    def write_batch_to_remote_shard(
+        self,
+        shard_id: str,
+        vectors_data: Dict[str, Any],
+        namespace: str
+    ) -> bool:
+        """
+        Записать batch векторов на удаленный шард через HTTP API.
+        
+        Args:
+            shard_id: Идентификатор удаленного шарда
+            vectors_data: Словарь с ключом "vectors" содержащий список векторов
+            namespace: Пространство имен
+            
+        Returns:
+            True если запись успешна
+        """
+        if self._session is None:
+            self.logger.error("HTTP сессия не инициализирована")
+            return False
+        
+        if shard_id not in self._shards:
+            self.logger.error(f"Шард {shard_id} не найден")
+            return False
+        
+        shard = self._shards[shard_id]
+        if shard.url is None:
+            self.logger.error(f"Шард {shard_id} не является удаленным")
+            return False
+        
+        try:
+            url = f"{shard.url}/vectors/batch?namespace={namespace}"
+            response = self._session.put(
+                url,
+                json=vectors_data,
+                timeout=self._request_timeout * len(vectors_data.get("vectors", []))
+            )
+            
+            if response.status_code == 200:
+                return True
+            else:
+                self.logger.error(
+                    f"Ошибка batch записи на удаленный шард {shard_id}: "
+                    f"HTTP {response.status_code}"
+                )
+                return False
+        except Exception as e:
+            self.logger.error(
+                f"Ошибка batch записи на удаленный шард {shard_id}: {e}",
+                exc_info=True
+            )
+            return False
+    
+    def add_local_shard(self, shard_id: str, storage: StorageEngine) -> bool:
+        """
+        Добавить новый локальный шард с StorageEngine.
+        
+        Args:
+            shard_id: Уникальный идентификатор шарда
+            storage: StorageEngine для локального шарда
+            
+        Returns:
+            True если шард успешно добавлен
+        """
+        with self._lock:
+            if shard_id in self._shards:
+                self.logger.warning(f"Шард {shard_id} уже существует")
+                return False
+            
+            # Добавляем StorageEngine
+            self._shard_storages[shard_id] = storage
+            
+            # Создаем ShardInfo для локального шарда
+            shard = ShardInfo(shard_id, url=None)
+            shard.is_healthy = True  # Локальные шарды всегда здоровы
+            self._shards[shard_id] = shard
+            
+            self.logger.info(f"Добавлен локальный шард {shard_id}")
+            return True
+    

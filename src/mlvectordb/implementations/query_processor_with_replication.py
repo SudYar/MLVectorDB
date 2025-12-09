@@ -66,26 +66,30 @@ class QueryProcessorWithReplication(QueryProcessor):
             shard_storage = self._sharding_manager.get_shard_storage(shard_id)
             
             if shard_storage:
-                # Локальный шард - записываем напрямую
+                # Локальный шард - записываем ТОЛЬКО в шард
                 shard_storage.write(new_vec, namespace)
-                self._storage.write(new_vec, namespace)  # Также в первичное хранилище
+                # Обновляем счетчик векторов в шарде
+                self._sharding_manager.update_shard_vector_count(shard_id)
+                self.logger.info(f"Вектор {new_vec.id} записан в локальный шард {shard_id}, namespace={namespace}")
             else:
                 # Удаленный шард - записываем через HTTP API
                 success = self._sharding_manager.write_to_remote_shard(
                     shard_id, new_vec, namespace
                 )
                 if not success:
+                    # Если не удалось записать на удаленный шард, сохраняем в первичное хранилище как fallback
                     self.logger.warning(
                         f"Не удалось записать на удаленный шард {shard_id}, "
-                        f"сохраняем в первичное хранилище"
+                        f"сохраняем в первичное хранилище как fallback"
                     )
-                # Всегда сохраняем в первичное хранилище для индексации
-                self._storage.write(new_vec, namespace)
+                    self._storage.write(new_vec, namespace)
+                else:
+                    self.logger.debug(f"Вектор {new_vec.id} записан на удаленный шард {shard_id}")
         else:
             # Нет шардирования - используем обычную логику
             self._storage.write(new_vec, namespace)
         
-        # Добавляем в индекс
+        # Добавляем в индекс (индекс работает со всеми векторами независимо от шардирования)
         self._index.add([new_vec], namespace)
         
         # Реплицируем на другие реплики
@@ -117,6 +121,7 @@ class QueryProcessorWithReplication(QueryProcessor):
         # Распределяем векторы по шардам
         if self._sharding_manager:
             shard_vectors: Dict[str, List[Vector]] = {}
+            fallback_vectors: List[Vector] = []  # Векторы для fallback в первичное хранилище
             
             for vec in vecs_list:
                 shard_id = self._sharding_manager.get_shard_for_vector(vec, namespace)
@@ -124,27 +129,61 @@ class QueryProcessorWithReplication(QueryProcessor):
                     if shard_id not in shard_vectors:
                         shard_vectors[shard_id] = []
                     shard_vectors[shard_id].append(vec)
+                else:
+                    # Если не удалось определить шард, используем fallback
+                    fallback_vectors.append(vec)
             
             # Записываем в соответствующие шарды
             for shard_id, shard_vecs in shard_vectors.items():
                 shard_storage = self._sharding_manager.get_shard_storage(shard_id)
                 if shard_storage:
-                    # Локальный шард
+                    # Локальный шард - записываем ТОЛЬКО в шард
                     shard_storage.write_vectors(shard_vecs, namespace)
+                    # Обновляем счетчик векторов в шарде
+                    self._sharding_manager.update_shard_vector_count(shard_id)
+                    self.logger.debug(
+                        f"Записано {len(shard_vecs)} векторов в локальный шард {shard_id}"
+                    )
                 else:
-                    # Удаленный шард - записываем через HTTP API
+                    # Удаленный шард - записываем через HTTP API batch
+                    # Группируем векторы для batch запроса
+                    vectors_data = {
+                        "vectors": [
+                            {
+                                "values": v.values.tolist() if hasattr(v.values, 'tolist') else list(v.values),
+                                "metadata": dict(v.metadata)
+                            }
+                            for v in shard_vecs
+                        ]
+                    }
+                    
                     # Отправляем batch на удаленный шард
-                    for vec in shard_vecs:
-                        self._sharding_manager.write_to_remote_shard(
-                            shard_id, vec, namespace
+                    success = self._sharding_manager.write_batch_to_remote_shard(
+                        shard_id, vectors_data, namespace
+                    )
+                    if not success:
+                        # Если не удалось записать на удаленный шард, добавляем в fallback
+                        self.logger.warning(
+                            f"Не удалось записать batch на удаленный шард {shard_id}, "
+                            f"используем fallback"
                         )
-                # Также записываем в первичное хранилище для индексации
-                self._storage.write_vectors(shard_vecs, namespace)
+                        fallback_vectors.extend(shard_vecs)
+                    else:
+                        self.logger.debug(
+                            f"Записано {len(shard_vecs)} векторов на удаленный шард {shard_id}"
+                        )
+            
+            # Записываем fallback векторы в первичное хранилище
+            if fallback_vectors:
+                self._storage.write_vectors(fallback_vectors, namespace)
+                self.logger.debug(
+                    f"Записано {len(fallback_vectors)} векторов в первичное хранилище (fallback)"
+                )
         else:
             # Нет шардирования
             self._storage.write_vectors(vecs_list, namespace)
         
-        # Добавляем в индекс
+        # Добавляем в индекс (индекс работает со всеми векторами независимо от шардирования)
         self._index.add(vecs_list, namespace)
         
         # Реплицируем на другие реплики
@@ -290,6 +329,7 @@ class QueryProcessorWithReplication(QueryProcessor):
         
         # Удаляем из соответствующих шардов
         if self._sharding_manager:
+            updated_shards = set()  # Отслеживаем шарды, в которых были удаления
             for vid in ids:
                 shard_id = self._sharding_manager.get_shard_for_id(vid, namespace)
                 if shard_id:
@@ -297,7 +337,8 @@ class QueryProcessorWithReplication(QueryProcessor):
                     if shard_storage:
                         if shard_storage.delete(vid, namespace):
                             del_ids.append(vid)
-                    # Также удаляем из первичного хранилища
+                            updated_shards.add(shard_id)
+                    # Также удаляем из первичного хранилища (fallback векторы)
                     if self._storage.delete(vid, namespace):
                         if vid not in del_ids:
                             del_ids.append(vid)
@@ -305,6 +346,10 @@ class QueryProcessorWithReplication(QueryProcessor):
                     # Пробуем удалить из первичного хранилища
                     if self._storage.delete(vid, namespace):
                         del_ids.append(vid)
+            
+            # Обновляем счетчики векторов в шардах
+            for shard_id in updated_shards:
+                self._sharding_manager.update_shard_vector_count(shard_id)
         else:
             # Нет шардирования
             for vid in ids:
@@ -332,6 +377,66 @@ class QueryProcessorWithReplication(QueryProcessor):
                 self._index.rebuild(source, metric=self._index._space)
         
         return del_ids
+    
+    def list_namespaces(self) -> List[str]:
+        """Получить список всех namespace с учетом шардирования."""
+        all_namespaces = set()
+        
+        # Если есть шардирование, собираем namespace из всех шардов
+        if self._sharding_manager:
+            shard_ids = self._sharding_manager.list_shards()
+            
+            for shard_id in shard_ids:
+                shard_storage = self._sharding_manager.get_shard_storage(shard_id)
+                if shard_storage:
+                    # Локальный шард - получаем namespace
+                    namespaces = shard_storage.list_namespaces
+                    all_namespaces.update(namespaces)
+            
+            # Также проверяем первичное хранилище (для fallback векторов)
+            primary_namespaces = self._storage.list_namespaces
+            all_namespaces.update(primary_namespaces)
+        else:
+            # Нет шардирования - используем обычную логику
+            all_namespaces = set(self._storage.list_namespaces)
+        
+        return sorted(list(all_namespaces))
+    
+    def get_namespace_vectors(self, namespace: str) -> List[Dict[str, Any]]:
+        """Получить все векторы из namespace с учетом шардирования."""
+        all_vectors = []
+        
+        # Если есть шардирование, собираем векторы из всех шардов
+        if self._sharding_manager:
+            shard_ids = self._sharding_manager.list_shards()
+            
+            for shard_id in shard_ids:
+                shard_storage = self._sharding_manager.get_shard_storage(shard_id)
+                if shard_storage:
+                    # Локальный шард - читаем напрямую
+                    vectors = shard_storage.namespace_map.get(namespace, [])
+                    all_vectors.extend(vectors)
+            
+            # Также проверяем первичное хранилище (для fallback векторов)
+            fallback_vectors = self._storage.namespace_map.get(namespace, [])
+            # Добавляем только те векторы, которых нет в шардах
+            shard_vector_ids = {v.id for v in all_vectors}
+            for vec in fallback_vectors:
+                if vec.id not in shard_vector_ids:
+                    all_vectors.append(vec)
+        else:
+            # Нет шардирования - используем обычную логику
+            all_vectors = self._storage.namespace_map.get(namespace, [])
+        
+        # Конвертируем в формат словарей
+        return [
+            {
+                "id": v.id,
+                "values": v.values.tolist() if hasattr(v.values, 'tolist') else list(v.values),
+                "metadata": dict(v.metadata),
+            }
+            for v in all_vectors
+        ]
     
     def get_storage_info(self) -> Dict[str, Any]:
         """Получить информацию о хранилище с учетом репликации и шардирования."""

@@ -129,14 +129,35 @@ class ReplicationManagerImpl(ReplicationManager):
             )
             self._replicas[replica_id] = replica
             
-            # Проверяем здоровье новой реплики
-            is_healthy = self._check_replica_health_internal(replica_id)
-            replica.is_healthy = is_healthy
-            replica.last_health_check = time.time()
+            # Проверяем здоровье новой реплики (с повторными попытками)
+            is_healthy = False
+            max_retries = 3
+            retry_delay = 1.0  # секунды
+            
+            for attempt in range(max_retries):
+                is_healthy = self._check_replica_health_internal(replica_id)
+                replica.is_healthy = is_healthy
+                replica.last_health_check = time.time()
+                
+                if is_healthy:
+                    break
+                
+                if attempt < max_retries - 1:
+                    self.logger.debug(
+                        f"Реплика {replica_id} недоступна, повторная попытка "
+                        f"{attempt + 2}/{max_retries} через {retry_delay}с"
+                    )
+                    time.sleep(retry_delay)
+            
+            if not is_healthy:
+                self.logger.warning(
+                    f"Реплика {replica_id} добавлена, но недоступна. "
+                    f"Health check будет продолжать проверку в фоновом режиме."
+                )
             
             self.logger.info(
                 f"Добавлена реплика {replica_id} по адресу {replica_url} "
-                f"(здоровье: {'OK' if is_healthy else 'FAIL'})"
+                f"(здоровье: {'OK' if is_healthy else 'FAIL - будет проверяться в фоне'})"
             )
             return True
     
@@ -349,14 +370,25 @@ class ReplicationManagerImpl(ReplicationManager):
         try:
             response = self._session.get(
                 f"{replica.url}/health",
-                timeout=2.0
+                timeout=3.0  # Увеличиваем таймаут для более надежной проверки
             )
             is_healthy = response.status_code == 200
-            replica.is_healthy = is_healthy
-            replica.last_health_check = time.time()
+            
+            # Обновляем статус только если изменился или если это успешная проверка
+            if is_healthy or not replica.is_healthy:
+                replica.is_healthy = is_healthy
+                replica.last_health_check = time.time()
+            
+            if is_healthy:
+                self.logger.debug(f"Health check для реплики {replica_id}: OK")
+            else:
+                self.logger.debug(f"Health check для реплики {replica_id}: FAIL (HTTP {response.status_code})")
+            
             return is_healthy
         except Exception as e:
             self.logger.debug(f"Health check failed for {replica_id}: {e}")
+            # Помечаем как нездоровую только если это не временная ошибка сети
+            # (но для надежности помечаем как нездоровую)
             replica.is_healthy = False
             replica.last_health_check = time.time()
             return False

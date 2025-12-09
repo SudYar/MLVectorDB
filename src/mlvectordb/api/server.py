@@ -10,7 +10,6 @@ Usage:
 import requests
 import uvicorn
 import argparse
-import requests
 
 
 def main():
@@ -40,13 +39,12 @@ def main():
     )
     parser.add_argument(
         "--enable-replication",
-        action="store_true",
         choices=["primary", "replica"],
         help="Choose replication support"
     )
     parser.add_argument(
         "--primary-url",
-        default="127.0.0.1:8000",
+        default="http://localhost:8000",
         help="Send primary url"
     )
     parser.add_argument(
@@ -97,9 +95,9 @@ def main():
                 print("Primary replication manager initialized")
             if "replica" == args.enable_replication:
                 if args.replica_name and args.primary_url:
-                    request = requests.post(url=args.primary_url, params={
+                    request = requests.post(url=f"{args.primary_url}/replication/replicas", params={
                         "replica_id": args.replica_name,
-                        "replica_url": args.host
+                        "replica_url": f"http://{args.host}:{args.port}"
                     })
         if args.enable_sharding:
             # Создаем локальные шарды
