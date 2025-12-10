@@ -22,6 +22,7 @@ except ImportError:
 from ..interfaces.sharding import ShardingManager
 from ..interfaces.vector import VectorProtocol, VectorDTO
 from ..interfaces.storage_engine import StorageEngine
+from ..implementations.storage_engine_in_memory import StorageEngineInMemory
 
 
 class ShardInfo:
@@ -137,11 +138,12 @@ class ShardingManagerImpl(ShardingManager):
                 if shard_id in self._shard_storages:
                     shard.is_healthy = True
                 else:
-                    # Локальный шард без StorageEngine считается нездоровым
-                    shard.is_healthy = False
-                    self.logger.warning(
-                        f"Локальный шард {shard_id} добавлен без StorageEngine, "
-                        f"используйте add_local_shard() для добавления StorageEngine"
+                    # Автоматически создаем StorageEngine для локального шарда
+                    # чтобы он был здоровым, как при инициализации
+                    self._shard_storages[shard_id] = StorageEngineInMemory()
+                    shard.is_healthy = True
+                    self.logger.info(
+                        f"Автоматически создан StorageEngine для локального шарда {shard_id}"
                     )
             
             self.logger.info(

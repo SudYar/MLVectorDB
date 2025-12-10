@@ -404,38 +404,76 @@ class QueryProcessorWithReplication(QueryProcessor):
     
     def get_namespace_vectors(self, namespace: str) -> List[Dict[str, Any]]:
         """Получить все векторы из namespace с учетом шардирования."""
-        all_vectors = []
+        all_vectors_with_shard = []  # Список кортежей (вектор, shard_id)
         
         # Если есть шардирование, собираем векторы из всех шардов
         if self._sharding_manager:
+            shard_info_dict = self._sharding_manager.get_shard_info()
             shard_ids = self._sharding_manager.list_shards()
             
             for shard_id in shard_ids:
+                shard_details = shard_info_dict.get("shards", {}).get(shard_id, {})
+                is_local = shard_details.get("is_local", True)
+                
+                # Проверяем локальный шард
                 shard_storage = self._sharding_manager.get_shard_storage(shard_id)
                 if shard_storage:
                     # Локальный шард - читаем напрямую
                     vectors = shard_storage.namespace_map.get(namespace, [])
-                    all_vectors.extend(vectors)
+                    for vec in vectors:
+                        all_vectors_with_shard.append((vec, shard_id))
+                
+                # Проверяем удаленный шард
+                elif not is_local and shard_details.get("url"):
+                    # Удаленный шард - получаем через HTTP
+                    try:
+                        # Используем имплементацию напрямую для доступа к сессии
+                        from ..implementations.sharding_manager import ShardingManagerImpl
+                        if isinstance(self._sharding_manager, ShardingManagerImpl):
+                            shard_url = shard_details["url"]
+                            if hasattr(self._sharding_manager, '_session') and self._sharding_manager._session:
+                                url = f"{shard_url}/namespaces/vectors?namespace={namespace}"
+                                response = self._sharding_manager._session.get(
+                                    url,
+                                    timeout=self._sharding_manager._request_timeout
+                                )
+                                if response.status_code == 200:
+                                    remote_vectors = response.json()
+                                    for vec_data in remote_vectors:
+                                        # Создаем вектор из данных
+                                        vec = Vector(
+                                            values=vec_data["values"],
+                                            metadata=vec_data.get("metadata", {})
+                                        )
+                                        all_vectors_with_shard.append((vec, shard_id))
+                    except Exception as e:
+                        self.logger.warning(
+                            f"Не удалось получить векторы с удаленного шарда {shard_id}: {e}"
+                        )
             
             # Также проверяем первичное хранилище (для fallback векторов)
             fallback_vectors = self._storage.namespace_map.get(namespace, [])
             # Добавляем только те векторы, которых нет в шардах
-            shard_vector_ids = {v.id for v in all_vectors}
+            shard_vector_ids = {v.id for v, _ in all_vectors_with_shard}
             for vec in fallback_vectors:
                 if vec.id not in shard_vector_ids:
-                    all_vectors.append(vec)
+                    # Векторы из первичного хранилища не имеют шарда
+                    all_vectors_with_shard.append((vec, None))
         else:
             # Нет шардирования - используем обычную логику
-            all_vectors = self._storage.namespace_map.get(namespace, [])
+            vectors = self._storage.namespace_map.get(namespace, [])
+            for vec in vectors:
+                all_vectors_with_shard.append((vec, None))
         
-        # Конвертируем в формат словарей
+        # Конвертируем в формат словарей с информацией о шарде
         return [
             {
                 "id": v.id,
                 "values": v.values.tolist() if hasattr(v.values, 'tolist') else list(v.values),
                 "metadata": dict(v.metadata),
+                "shard_id": shard_id,
             }
-            for v in all_vectors
+            for v, shard_id in all_vectors_with_shard
         ]
     
     def get_storage_info(self) -> Dict[str, Any]:

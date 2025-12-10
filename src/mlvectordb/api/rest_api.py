@@ -44,6 +44,7 @@ class VectorInfo(BaseModel):
     id: UUID
     values: List[float]
     metadata: Dict[str, Any]
+    shard_id: Optional[str] = Field(None, description="ID шарда, на котором находится вектор")
 
 
 class RestAPI:
