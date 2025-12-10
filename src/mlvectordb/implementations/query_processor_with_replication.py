@@ -258,9 +258,16 @@ class QueryProcessorWithReplication(QueryProcessor):
             return []
         
         # Если результаты уже в формате словарей с полными данными (из удаленных шардов),
-        # используем их напрямую
+        # используем их напрямую, но нужно добавить информацию о шарде
         if all_results and isinstance(all_results[0], dict) and "values" in all_results[0]:
             # Результаты уже обогащены (из удаленных шардов)
+            # Добавляем информацию о шарде, если её нет
+            if self._sharding_manager:
+                for result in all_results:
+                    if "shard_id" not in result:
+                        vec_id = UUID(result["id"]) if isinstance(result["id"], str) else result["id"]
+                        shard_id = self._sharding_manager.get_shard_for_id(vec_id, namespace)
+                        result["shard_id"] = shard_id
             # Сортируем и берем top_k
             all_results.sort(key=lambda x: x["score"], reverse=True)
             return all_results[:top_k]
@@ -269,11 +276,15 @@ class QueryProcessorWithReplication(QueryProcessor):
         ids = [UUID(res["id"]) if isinstance(res["id"], str) else res["id"] for res in all_results]
         
         # Получаем векторы из соответствующих шардов
+        # Также отслеживаем, из какого шарда был получен каждый вектор
+        vector_to_shard_map = {}  # {vector_id: shard_id}
+        
         if self._sharding_manager:
             stored_vectors = []
             for vec_id in ids:
                 shard_id = self._sharding_manager.get_shard_for_id(vec_id, namespace)
                 if shard_id:
+                    vector_to_shard_map[vec_id] = shard_id
                     shard_storage = self._sharding_manager.get_shard_storage(shard_id)
                     if shard_storage:
                         # Локальный шард
@@ -292,13 +303,18 @@ class QueryProcessorWithReplication(QueryProcessor):
                             vec = self._storage.read(vec_id, namespace)
                             if vec:
                                 stored_vectors.append(vec)
+                                vector_to_shard_map[vec_id] = None  # Из первичного хранилища
                 else:
                     # Пробуем получить из первичного хранилища
                     vec = self._storage.read(vec_id, namespace)
                     if vec:
                         stored_vectors.append(vec)
+                        vector_to_shard_map[vec_id] = None  # Из первичного хранилища
         else:
             stored_vectors = list(self._storage.read_vectors(ids, namespace))
+            # Нет шардирования - все векторы из первичного хранилища
+            for vec_id in ids:
+                vector_to_shard_map[vec_id] = None
         
         # Обогащаем результаты
         vector_map = {v.id: v for v in stored_vectors if v}
@@ -308,11 +324,13 @@ class QueryProcessorWithReplication(QueryProcessor):
             score = res["score"]
             v = vector_map.get(vec_id)
             if v:
+                shard_id = vector_to_shard_map.get(vec_id)
                 enriched.append({
                     "id": v.id,
                     "values": v.values.tolist() if hasattr(v.values, 'tolist') else list(v.values),
                     "metadata": dict(v.metadata),
                     "score": score,
+                    "shard_id": shard_id,
                 })
         
         # Сортируем по score (убывание) и берем top_k

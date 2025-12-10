@@ -79,7 +79,7 @@ class ReplicationManagerImpl(ReplicationManager):
         self._replicas: Dict[str, ReplicaInfo] = {}
         self._lock = threading.RLock()
         
-        # Настройка HTTP сессии с retry стратегией
+        # Настройка HTTP сессии с retry стратегией для обычных запросов
         self._session = requests.Session()
         retry_strategy = Retry(
             total=3,
@@ -90,6 +90,12 @@ class ReplicationManagerImpl(ReplicationManager):
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self._session.mount("http://", adapter)
         self._session.mount("https://", adapter)
+        
+        # Отдельная сессия для health check без retry (быстрая проверка)
+        self._health_check_session = requests.Session()
+        no_retry_adapter = HTTPAdapter(max_retries=0)  # Без retry для быстрой проверки
+        self._health_check_session.mount("http://", no_retry_adapter)
+        self._health_check_session.mount("https://", no_retry_adapter)
         
         # Логирование
         self.logger = logging.getLogger(__name__)
@@ -129,13 +135,14 @@ class ReplicationManagerImpl(ReplicationManager):
             )
             self._replicas[replica_id] = replica
             
-            # Проверяем здоровье новой реплики (с повторными попытками)
+            # Быстрая проверка здоровья новой реплики (без долгих ожиданий)
+            # Если реплика еще не готова, health check в фоне продолжит проверку
             is_healthy = False
-            max_retries = 3
-            retry_delay = 1.0  # секунды
+            max_retries = 1  # Только одна быстрая попытка при добавлении
+            retry_delay = 0.5  # Короткая задержка
             
             for attempt in range(max_retries):
-                is_healthy = self._check_replica_health_internal(replica_id)
+                is_healthy = self._check_replica_health_internal(replica_id, use_fast_check=True)
                 replica.is_healthy = is_healthy
                 replica.last_health_check = time.time()
                 
@@ -363,14 +370,24 @@ class ReplicationManagerImpl(ReplicationManager):
                 return False
             return self._check_replica_health_internal(replica_id)
     
-    def _check_replica_health_internal(self, replica_id: str) -> bool:
-        """Внутренний метод проверки здоровья реплики."""
+    def _check_replica_health_internal(self, replica_id: str, use_fast_check: bool = False) -> bool:
+        """
+        Внутренний метод проверки здоровья реплики.
+        
+        Args:
+            replica_id: ID реплики для проверки
+            use_fast_check: Если True, использует быструю проверку без retry и с коротким таймаутом
+        """
         replica = self._replicas[replica_id]
         
+        # Выбираем сессию и таймаут в зависимости от типа проверки
+        session = self._health_check_session if use_fast_check else self._session
+        timeout = 1.0 if use_fast_check else 3.0  # Короткий таймаут для быстрой проверки
+        
         try:
-            response = self._session.get(
+            response = session.get(
                 f"{replica.url}/health",
-                timeout=3.0  # Увеличиваем таймаут для более надежной проверки
+                timeout=timeout
             )
             is_healthy = response.status_code == 200
             
@@ -507,7 +524,7 @@ class ReplicationManagerImpl(ReplicationManager):
                 info["replicas"][replica_id] = {
                     "url": replica.url,
                     "is_healthy": replica.is_healthy,
-                    "last_health_check": replica.last_health_check,
+                    "last_health_check": time.ctime(replica.last_health_check) if replica.last_health_check else None,
                     "is_primary": replica.is_primary
                 }
         

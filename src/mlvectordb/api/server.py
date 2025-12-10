@@ -44,7 +44,7 @@ def main():
     )
     parser.add_argument(
         "--primary-url",
-        default="http://localhost:8000/replication/replicas",
+        default="http://localhost:8000",
         help="Send primary url"
     )
     parser.add_argument(
@@ -95,10 +95,20 @@ def main():
                 print("Primary replication manager initialized")
             if "replica" == args.enable_replication:
                 if args.replica_name and args.primary_url:
-                    request = requests.post(url=f"{args.primary_url}/replication/replicas", params={
-                        "replica_id": args.replica_name,
-                        "replica_url": f"http://{args.host}:{args.port}"
-                    })
+                    try:
+                        request = requests.post(
+                            url=f"{args.primary_url}/replication/replicas",
+                            params={
+                                "replica_id": args.replica_name,
+                                "replica_url": f"http://{args.host}:{args.port}"
+                            },
+                            timeout=5.0  # Таймаут 5 секунд
+                        )
+                        request.raise_for_status()
+                        print(f"Реплика {args.replica_name} успешно зарегистрирована на primary")
+                    except requests.exceptions.RequestException as e:
+                        print(f"Предупреждение: Не удалось зарегистрировать реплику на primary: {e}")
+                        print("Реплика будет запущена, но регистрация будет выполнена позже")
         if args.enable_sharding:
             # Создаем локальные шарды
             shard_storages = {
@@ -107,7 +117,7 @@ def main():
             }
             sharding_manager = ShardingManagerImpl(
                 shard_storages=shard_storages,
-                sharding_strategy="hash",
+                sharding_strategy="round_robin",
                 health_check_interval=5.0
             )
             print(f"Sharding manager initialized with {len(shard_storages)} local shards")

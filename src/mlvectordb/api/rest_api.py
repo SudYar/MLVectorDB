@@ -30,6 +30,7 @@ class VectorSearchResult(BaseModel):
     values: List[float]
     metadata: Dict[str, Any]
     score: float
+    shard_id: Optional[str] = Field(None, description="ID шарда, на котором находится вектор")
 
 
 class VectorDeleteRequest(BaseModel):
@@ -626,6 +627,37 @@ class RestAPI:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to redistribute data: {str(e)}"
+                )
+
+        @self.app.post("/sharding/shards/redistribute-all")
+        async def redistribute_all_shard_data():
+            """Перераспределить все векторы между всеми шардами согласно стратегии шардирования"""
+            self.logger.info("Запрос перераспределения всех векторов между всеми шардами")
+            try:
+                if hasattr(self.query_processor, '_sharding_manager') and self.query_processor._sharding_manager:
+                    success = self.query_processor._sharding_manager.redistribute_all_data()
+                    if success:
+                        return {
+                            "status": "success",
+                            "message": "Все векторы перераспределены между всеми шардами согласно стратегии шардирования"
+                        }
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Не удалось перераспределить все векторы"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Шардирование не настроено"
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Ошибка перераспределения всех данных: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to redistribute all data: {str(e)}"
                 )
 
     def get_app(self) -> FastAPI:
