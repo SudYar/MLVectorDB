@@ -328,7 +328,7 @@ class ReplicationManagerImpl(ReplicationManager):
         vectors_data = {
             "vectors": [
                 {
-                    "id": v.id,
+                    "id": str(v.id),
                     "values": v.values.tolist() if hasattr(v.values, 'tolist') else list(v.values),
                     "metadata": dict(v.metadata)
                 }
@@ -464,6 +464,7 @@ class ReplicationManagerImpl(ReplicationManager):
                     vectors_data = {
                         "vectors": [
                             {
+                                "id": str(v.id),
                                 "values": v.values.tolist() if hasattr(v.values, 'tolist') else list(v.values),
                                 "metadata": dict(v.metadata)
                             }
@@ -473,7 +474,7 @@ class ReplicationManagerImpl(ReplicationManager):
                     
                     # Отправляем batch на реплику
                     try:
-                        url = f"{replica.url}/vectors/batch?namespace={ns}"
+                        url = f"{replica.url}/vectors/copy/batch?namespace={ns}"
                         response = self._session.put(
                             url,
                             json=vectors_data,
