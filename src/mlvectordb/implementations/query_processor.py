@@ -1,11 +1,13 @@
 from __future__ import annotations
+
 from typing import Iterable, Sequence, List, Dict, Any
 from uuid import UUID
-from ..interfaces.vector import VectorDTO
+
+from ..implementations.vector import Vector
 from ..interfaces.index import IndexProtocol
 from ..interfaces.query_processor import QueryProcessorProtocol
 from ..interfaces.storage_engine import StorageEngine
-from ..implementations.vector import Vector
+from ..interfaces.vector import VectorDTO, VectorProtocol
 
 
 class QueryProcessor(QueryProcessorProtocol):
@@ -13,15 +15,21 @@ class QueryProcessor(QueryProcessorProtocol):
         self._storage = storage_engine
         self._index = index
 
-    def insert(self, vector: VectorDTO, namespace: str = "default") -> None:
+    def insert_new(self, vector: VectorDTO, namespace: str = "default") -> None:
         new_vec = Vector(values=vector.values, metadata=vector.metadata)
-        self._storage.write(new_vec, namespace)
-        self._index.add([new_vec], namespace)
+        self.insert(new_vec, namespace)
 
-    def upsert_many(self, vectors: Iterable[VectorDTO], namespace: str = "default") -> None:
+    def insert(self, vector: VectorProtocol, namespace: str = "default") -> None:
+        self._storage.write(vector, namespace)
+        self._index.add([vector], namespace)
+
+    def upsert_many_new(self, vectors: Iterable[VectorDTO], namespace: str = "default") -> None:
         vecs = [Vector(values=v.values, metadata=v.metadata) for v in vectors]
-        self._storage.write_vectors(vecs, namespace)
-        self._index.add(vecs, namespace)
+        self.upsert_many(vecs, namespace)
+
+    def upsert_many(self, vectors: Iterable[VectorProtocol], namespace: str = "default") -> None:
+        self._storage.write_vectors(list(vectors), namespace)
+        self._index.add(vectors, namespace)
 
     def find_similar(
         self,

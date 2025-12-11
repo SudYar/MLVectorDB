@@ -3,18 +3,18 @@
 """
 
 from __future__ import annotations
+
+import logging
 from typing import Iterable, Sequence, List, Dict, Any, Optional
 from uuid import UUID
-import logging
 
-from ..interfaces.vector import VectorDTO
+from ..implementations.query_processor import QueryProcessor
+from ..implementations.vector import Vector
 from ..interfaces.index import IndexProtocol
-from ..interfaces.query_processor import QueryProcessorProtocol
-from ..interfaces.storage_engine import StorageEngine
 from ..interfaces.replication import ReplicationManager
 from ..interfaces.sharding import ShardingManager
-from ..implementations.vector import Vector
-from ..implementations.query_processor import QueryProcessor
+from ..interfaces.storage_engine import StorageEngine
+from ..interfaces.vector import VectorDTO
 
 
 class QueryProcessorWithReplication(QueryProcessor):
@@ -51,30 +51,33 @@ class QueryProcessorWithReplication(QueryProcessor):
         # Если есть шардирование, нужно создать индексы для каждого шарда
         # В текущей реализации используем один индекс для всех шардов
         # Это можно улучшить в будущем
-    
-    def insert(self, vector: VectorDTO, namespace: str = "default") -> None:
+
+    def insert_new(self, vector: VectorDTO, namespace: str = "default") -> None:
         """Вставка вектора с поддержкой репликации и шардирования."""
         new_vec = Vector(values=vector.values, metadata=vector.metadata)
-        
+
+        self.insert(new_vec, namespace)
+
+    def insert(self, vector: Vector, namespace: str = "default") -> None:
         # Определяем шард для вектора
         if self._sharding_manager:
-            shard_id = self._sharding_manager.get_shard_for_vector(new_vec, namespace)
+            shard_id = self._sharding_manager.get_shard_for_vector(vector, namespace)
             if shard_id is None:
                 raise RuntimeError("Не удалось определить шард для вектора")
-            
+
             # Получаем хранилище для шарда
             shard_storage = self._sharding_manager.get_shard_storage(shard_id)
-            
+
             if shard_storage:
                 # Локальный шард - записываем ТОЛЬКО в шард
-                shard_storage.write(new_vec, namespace)
+                shard_storage.write(vector, namespace)
                 # Обновляем счетчик векторов в шарде
                 self._sharding_manager.update_shard_vector_count(shard_id)
-                self.logger.info(f"Вектор {new_vec.id} записан в локальный шард {shard_id}, namespace={namespace}")
+                self.logger.info(f"Вектор {vector.id} записан в локальный шард {shard_id}, namespace={namespace}")
             else:
                 # Удаленный шард - записываем через HTTP API
                 success = self._sharding_manager.write_to_remote_shard(
-                    shard_id, new_vec, namespace
+                    shard_id, vector, namespace
                 )
                 if not success:
                     # Если не удалось записать на удаленный шард, сохраняем в первичное хранилище как fallback
@@ -82,20 +85,20 @@ class QueryProcessorWithReplication(QueryProcessor):
                         f"Не удалось записать на удаленный шард {shard_id}, "
                         f"сохраняем в первичное хранилище как fallback"
                     )
-                    self._storage.write(new_vec, namespace)
+                    self._storage.write(vector, namespace)
                 else:
-                    self.logger.debug(f"Вектор {new_vec.id} записан на удаленный шард {shard_id}")
+                    self.logger.debug(f"Вектор {vector.id} записан на удаленный шард {shard_id}")
         else:
             # Нет шардирования - используем обычную логику
-            self._storage.write(new_vec, namespace)
-        
+            self._storage.write(vector, namespace)
+
         # Добавляем в индекс (индекс работает со всеми векторами независимо от шардирования)
-        self._index.add([new_vec], namespace)
-        
+        self._index.add([vector], namespace)
+
         # Реплицируем на другие реплики
         if self._replication_manager:
             try:
-                results = self._replication_manager.replicate_write(new_vec, namespace)
+                results = self._replication_manager.replicate_write(vector, namespace)
                 successful = sum(1 for v in results.values() if v)
                 total = len(results)
                 if successful < total:
@@ -105,15 +108,20 @@ class QueryProcessorWithReplication(QueryProcessor):
             except Exception as e:
                 self.logger.error(f"Ошибка репликации: {e}", exc_info=True)
                 # Не прерываем выполнение, если репликация не удалась
-    
+
+    def upsert_many_new(self,
+                        vectors: Iterable[VectorDTO],
+                        namespace: str = "default") -> None:
+        vecs = [Vector(values=v.values, metadata=v.metadata) for v in vectors]
+        self.upsert_many(vecs, namespace)
+
     def upsert_many(
         self,
-        vectors: Iterable[VectorDTO],
+            vectors: Iterable[Vector],
         namespace: str = "default"
     ) -> None:
         """Массовая вставка векторов с поддержкой репликации и шардирования."""
-        vecs = [Vector(values=v.values, metadata=v.metadata) for v in vectors]
-        vecs_list = list(vecs)
+        vecs_list = list(vectors)
         
         if not vecs_list:
             return
@@ -150,6 +158,7 @@ class QueryProcessorWithReplication(QueryProcessor):
                     vectors_data = {
                         "vectors": [
                             {
+                                "id": str(v.id),
                                 "values": v.values.tolist() if hasattr(v.values, 'tolist') else list(v.values),
                                 "metadata": dict(v.metadata)
                             }

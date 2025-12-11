@@ -8,9 +8,9 @@
 import logging
 import threading
 import time
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Any
 from uuid import UUID
-from dataclasses import dataclass, field
 
 try:
     import requests
@@ -199,6 +199,7 @@ class ReplicationManagerImpl(ReplicationManager):
         
         # Подготовка данных для репликации
         vector_data = {
+            "id": str(vector.id),
             "values": vector.values.tolist() if hasattr(vector.values, 'tolist') else list(vector.values),
             "metadata": dict(vector.metadata)
         }
@@ -233,7 +234,7 @@ class ReplicationManagerImpl(ReplicationManager):
                 continue
             
             try:
-                url = f"{replica.url}/vectors?namespace={namespace}"
+                url = f"{replica.url}/vectors/copy?namespace={namespace}"
                 response = self._session.post(
                     url,
                     json=vector_data,
@@ -327,6 +328,7 @@ class ReplicationManagerImpl(ReplicationManager):
         vectors_data = {
             "vectors": [
                 {
+                    "id": v.id,
                     "values": v.values.tolist() if hasattr(v.values, 'tolist') else list(v.values),
                     "metadata": dict(v.metadata)
                 }
@@ -340,7 +342,7 @@ class ReplicationManagerImpl(ReplicationManager):
                 continue
             
             try:
-                url = f"{replica.url}/vectors/batch?namespace={namespace}"
+                url = f"{replica.url}/vectors/copy/batch?namespace={namespace}"
                 response = self._session.put(
                     url,
                     json=vectors_data,

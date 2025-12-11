@@ -1,9 +1,9 @@
 import logging
 import sys
 import time
-from uuid import UUID
-from typing import List, Any, Dict, Optional
 from contextlib import asynccontextmanager
+from typing import List, Any, Dict, Optional
+from uuid import UUID
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, status, Request, Query
@@ -11,10 +11,16 @@ from pydantic import BaseModel, Field
 
 from src.mlvectordb.interfaces.query_processor import QueryProcessorProtocol
 from src.mlvectordb.interfaces.vector import VectorDTO
-
+from src.mlvectordb.implementations.vector import Vector
 
 # Pydantic модели для API (из второго файла)
 class VectorCreateRequest(BaseModel):
+    values: List[float] = Field(..., description="Вектор как список чисел")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Метаданные вектора")
+
+
+class VectorCopyRequest(BaseModel):
+    id: str = Field(..., description="сгенерированный id вектора")
     values: List[float] = Field(..., description="Вектор как список чисел")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Метаданные вектора")
 
@@ -39,6 +45,10 @@ class VectorDeleteRequest(BaseModel):
 
 class BatchVectorRequest(BaseModel):
     vectors: List[VectorCreateRequest] = Field(..., description="Список векторов")
+
+
+class BatchVectorCopyRequest(BaseModel):
+    vectors: List[VectorCopyRequest] = Field(..., description="Список векторов")
 
 
 class VectorInfo(BaseModel):
@@ -95,6 +105,36 @@ class RestAPI:
     def _setup_routes(self):
         """Настройка маршрутов API"""
 
+        @self.app.post("/vectors/copy", status_code=status.HTTP_201_CREATED)
+        async def insert_copy_vector(
+                vector_request: VectorCopyRequest,
+                namespace: str = Query("default", description="Namespace for the vector")
+        ):
+            """Вставка копии одного вектора"""
+            self.logger.info(
+                f"Запрос на вставку копии вектора - "
+                f"пространство: {namespace}, id: {vector_request.id}, размер: {len(vector_request.values)}, "
+                f"метаданные: {list(vector_request.metadata.keys())}"
+            )
+
+            try:
+                vector = Vector(id=UUID(vector_request.id), values=vector_request.values,
+                                metadata=vector_request.metadata)
+                self.logger.debug("Вызов query_processor.insert")
+                self.query_processor.insert(vector, namespace)
+
+                self.logger.info(f"Вектор успешно вставлен в пространство: {namespace}")
+                return {"status": "success", "message": "Vector inserted"}
+
+            except Exception as e:
+                self.logger.error(
+                    f"Ошибка вставки - пространство: {namespace}, ошибка: {str(e)}",
+                    exc_info=True
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Insert failed: {str(e)}"
+                )
         @self.app.post("/vectors", status_code=status.HTTP_201_CREATED)
         async def insert_vector(
                 vector: VectorCreateRequest,
@@ -109,8 +149,11 @@ class RestAPI:
 
             try:
                 vector_dto = VectorDTO(values=vector.values, metadata=vector.metadata)
-                self.logger.debug("Вызов query_processor.insert")
-                self.query_processor.insert(vector_dto, namespace)
+                self.logger.debug("Вызов query_processor.insert_new")
+                if hasattr(self.query_processor, "insert_new"):
+                    self.query_processor.insert_new(vector_dto, namespace)
+                else:
+                    self.query_processor.insert(vector_dto, namespace)
 
                 self.logger.info(f"Вектор успешно вставлен в пространство: {namespace}")
                 return {"status": "success", "message": "Vector inserted"}
@@ -123,6 +166,42 @@ class RestAPI:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Insert failed: {str(e)}"
+                )
+
+        @self.app.put("/vectors/copy/batch")
+        async def upsert_copy_vectors(
+                batch_request: BatchVectorCopyRequest,
+                namespace: str = Query("default", description="Namespace for the vectors")
+        ):
+            """Массовый copy upsert векторов"""
+            self.logger.info(
+                f"Запрос массового копирования - "
+                f"пространство: {namespace}, количество векторов: {len(batch_request.vectors)}"
+            )
+            try:
+                vectors = [
+                    Vector(id=UUID(vector.id), values=vector.values, metadata=vector.metadata)
+                    for vector in batch_request.vectors
+                ]
+                self.logger.debug(f"Вызов query_processor.upsert_many с {len(vectors)} векторами")
+                self.query_processor.upsert_many(vectors, namespace)
+
+                self.logger.info(
+                    f"Массовый upsert завершен успешно - "
+                    f"{len(vectors)} векторов в пространстве: {namespace}"
+                )
+                return {"status": "success", "message": f"{len(vectors)} vectors upserted"}
+
+            except Exception as e:
+                self.logger.error(
+                    f"Ошибка массового upsert - "
+                    f"пространство: {namespace}, количество векторов: {len(batch_request.vectors)}, "
+                    f"ошибка: {str(e)}",
+                    exc_info=True
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Batch upsert failed: {str(e)}"
                 )
 
         @self.app.put("/vectors/batch")
@@ -141,8 +220,11 @@ class RestAPI:
                     VectorDTO(values=vector.values, metadata=vector.metadata)
                     for vector in batch_request.vectors
                 ]
-                self.logger.debug(f"Вызов query_processor.upsert_many с {len(vectors_dto)} векторами")
-                self.query_processor.upsert_many(vectors_dto, namespace)
+                self.logger.debug(f"Вызов query_processor.upsert_many_new с {len(vectors_dto)} векторами")
+                if hasattr(self.query_processor, "upsert_many_new"):
+                    self.query_processor.upsert_many_new(vectors_dto, namespace)
+                else:
+                    self.query_processor.upsert_many(vectors_dto, namespace)
 
                 self.logger.info(
                     f"Массовый upsert завершен успешно - "
@@ -732,7 +814,7 @@ class RestAPI:
 if __name__ == "__main__":
     # Пример инициализации
     from src.mlvectordb.implementations.query_processor import QueryProcessor
-    from src.mlvectordb import Index, StorageEngineInMemory
+    from src.mlvectordb import Index, StorageEngineInMemory, Vector
 
     # Инициализация компонентов
     qproc = QueryProcessor(StorageEngineInMemory(), Index())

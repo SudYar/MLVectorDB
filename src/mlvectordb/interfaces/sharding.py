@@ -5,10 +5,12 @@
 по нескольким шардам хранилища.
 """
 
-from typing import Protocol, List, Optional, Dict, Any, Sequence
+from typing import Protocol, List, Optional, Dict, Any
 from uuid import UUID
+
 from typing_extensions import runtime_checkable
 
+from .storage_engine import StorageEngine
 from .vector import VectorProtocol
 
 
@@ -107,6 +109,9 @@ class ShardingManager(Protocol):
             True если перераспределение успешно
         """
         raise NotImplementedError
+
+    def redistribute_all_data(self) -> bool:
+        raise NotImplementedError
     
     def check_shard_health(self, shard_id: str) -> bool:
         """
@@ -147,3 +152,11 @@ class ShardingManager(Protocol):
         """
         raise NotImplementedError
 
+    def get_shard_storage(self, shard_id: str) -> Optional[StorageEngine]:
+        raise NotImplementedError
+
+    def update_shard_vector_count(self, shard_id: str) -> None:
+        raise NotImplementedError
+
+    def shutdown(self):
+        raise NotImplementedError

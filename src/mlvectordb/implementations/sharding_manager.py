@@ -9,7 +9,7 @@ import hashlib
 import logging
 import threading
 import time
-from typing import Dict, List, Optional, Sequence, Any
+from typing import Dict, List, Optional, Any
 from uuid import UUID
 
 try:
@@ -1047,11 +1047,12 @@ class ShardingManagerImpl(ShardingManager):
         
         try:
             vector_data = {
+                "id": str(vector.id),
                 "values": vector.values.tolist() if hasattr(vector.values, 'tolist') else list(vector.values),
                 "metadata": dict(vector.metadata)
             }
-            
-            url = f"{shard.url}/vectors?namespace={namespace}"
+
+            url = f"{shard.url}/vectors/copy?namespace={namespace}"
             response = self._session.post(
                 url,
                 json=vector_data,
@@ -1104,7 +1105,7 @@ class ShardingManagerImpl(ShardingManager):
             return False
         
         try:
-            url = f"{shard.url}/vectors/batch?namespace={namespace}"
+            url = f"{shard.url}/vectors/copy/batch?namespace={namespace}"
             response = self._session.put(
                 url,
                 json=vectors_data,

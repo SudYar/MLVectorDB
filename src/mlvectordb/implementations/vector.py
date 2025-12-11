@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import uuid
 from typing import Mapping, Any, Sequence
-import numpy as np
 from uuid import UUID
+
+import numpy as np
+
 from ..interfaces.vector import VectorProtocol
 
 
 class Vector(VectorProtocol):
 
-    def __init__(self, values: Sequence[float], metadata: Mapping[str, Any] | None = None) -> None:
-        self._id: UUID = uuid.uuid4()
+    def __init__(self, values: Sequence[float], id: UUID | None = None,
+                 metadata: Mapping[str, Any] | None = None) -> None:
+        self._id: UUID = uuid.uuid4() if id is None else id
         self._values: np.ndarray = np.array(values, dtype=np.float32)
         self._metadata: Mapping[str, Any] = metadata or {}
 

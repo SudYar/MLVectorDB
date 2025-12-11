@@ -1,8 +1,11 @@
 from __future__ import annotations
-from typing import Protocol, Sequence, Mapping, Any, runtime_checkable
-import numpy as np
+
 from dataclasses import dataclass
+from typing import Protocol, Sequence, Mapping, Any, runtime_checkable
 from uuid import UUID
+
+import numpy as np
+
 
 @runtime_checkable
 class VectorProtocol(Protocol):
@@ -10,7 +13,8 @@ class VectorProtocol(Protocol):
     values: np.ndarray
     metadata: Mapping[str, Any]
 
-    def __init__(self, values: Sequence[float], metadata: Mapping[str, Any] | None = None) -> None:
+    def __init__(self, values: Sequence[float], id: UUID | None = None,
+                 metadata: Mapping[str, Any] | None = None) -> None:
         ...
 
     def shape(self) -> tuple:
